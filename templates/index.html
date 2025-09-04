@@ -1,0 +1,125 @@
+{% extends "base.html" %} {% block content %}
+<div class="text-center mb-5">
+  <h1 class="display-4 mb-4">
+    <i class="fas fa-shield-alt text-primary"></i>
+    Aadhar Card Fraud Detection
+  </h1>
+  <p class="lead text-muted">
+    Upload an Aadhar card image to analyze for potential fraud indicators
+  </p>
+</div>
+
+{% with messages = get_flashed_messages() %} {% if messages %}
+<div class="alert alert-warning alert-dismissible fade show" role="alert">
+  {% for message in messages %} {{ message }} {% endfor %}
+  <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %} {% endwith %}
+
+<form
+  action="{{ url_for('upload_file') }}"
+  method="post"
+  enctype="multipart/form-data"
+>
+  <div
+    class="upload-area"
+    onclick="document.getElementById('file-input').click()"
+  >
+    <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
+    <h4>Click to Upload Aadhar Card Image</h4>
+    <p class="text-muted">Supports JPG, PNG, GIF, BMP files (Max 16MB)</p>
+    <input
+      type="file"
+      id="file-input"
+      name="file"
+      accept="image/*"
+      style="display: none"
+      onchange="showFileName(this)"
+      required
+    />
+    <div id="file-name" class="mt-3 text-success" style="display: none"></div>
+  </div>
+
+  <div class="text-center mt-4">
+    <button type="submit" class="btn btn-analyze btn-lg">
+      <i class="fas fa-search me-2"></i>
+      Analyze for Fraud
+    </button>
+  </div>
+</form>
+
+<div class="row mt-5">
+  <div class="col-md-4">
+    <div class="analysis-card text-center">
+      <i class="fas fa-camera fa-2x text-info mb-3"></i>
+      <h5>EXIF Analysis</h5>
+      <p>Checks image metadata for tampering signs</p>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="analysis-card text-center">
+      <i class="fas fa-eye fa-2x text-warning mb-3"></i>
+      <h5>Object Detection</h5>
+      <p>Uses YOLO to detect inappropriate objects</p>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="analysis-card text-center">
+      <i class="fas fa-text-width fa-2x text-success mb-3"></i>
+      <h5>OCR Validation</h5>
+      <p>Extracts and validates Aadhaar number format</p>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  function showFileName(input) {
+    const fileNameDiv = document.getElementById("file-name");
+    if (input.files && input.files[0]) {
+      fileNameDiv.innerHTML = `<i class="fas fa-file-image me-2"></i>Selected: ${input.files[0].name}`;
+      fileNameDiv.style.display = "block";
+    }
+  }
+
+  // Drag and drop functionality
+  const uploadArea = document.querySelector(".upload-area");
+  const fileInput = document.getElementById("file-input");
+
+  ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+    uploadArea.addEventListener(eventName, preventDefaults, false);
+  });
+
+  function preventDefaults(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  ["dragenter", "dragover"].forEach((eventName) => {
+    uploadArea.addEventListener(eventName, highlight, false);
+  });
+
+  ["dragleave", "drop"].forEach((eventName) => {
+    uploadArea.addEventListener(eventName, unhighlight, false);
+  });
+
+  function highlight(e) {
+    uploadArea.classList.add("border-primary");
+  }
+
+  function unhighlight(e) {
+    uploadArea.classList.remove("border-primary");
+  }
+
+  uploadArea.addEventListener("drop", handleDrop, false);
+
+  function handleDrop(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+
+    if (files.length > 0) {
+      fileInput.files = files;
+      showFileName(fileInput);
+    }
+  }
+</script>
+{% endblock %}
