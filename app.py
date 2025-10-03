@@ -15,6 +15,20 @@ from supervision import Detections
 import requests
 from skimage.metrics import structural_similarity as ssim
 
+
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+# Initializing Firebase 
+try:
+    cred = credentials.Certificate("firebase-credentials.json")
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("Successfully connected to Firebase.")
+except Exception as e:
+    print(f"Error connecting to Firebase: {e}")
+    db = None
+
 tesseract_path = os.getenv("TESSERACT_PATH", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
@@ -31,6 +45,18 @@ try:
 except:
     model = None
     print("Warning: YOLO model not loaded. Install ultralytics and download yolov8n.pt")
+    
+    
+# Loading the pre-trained YOLO Object Detection model
+try:
+    OBJECT_DETECTION_MODEL_PATH = "./models/best.pt"
+    object_detection_model = YOLO(OBJECT_DETECTION_MODEL_PATH)
+    print("Object detection model loaded successfully.")
+    print(f"Object Detection Model classes: {object_detection_model.names}")
+except Exception as e:
+    object_detection_model = None
+    print("Warning: YOLO model not loaded. Install ultralytics and download yolov8n.pt")
+    print(f"Warning: Custom Object Detection model not loaded. Error: {e}")
 
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp'}
@@ -52,6 +78,7 @@ _d = (
     (9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 )
 
+# permutation table for Verhoeff Checksum
 _p = (
     (0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
     (1, 5, 7, 6, 2, 8, 3, 0, 9, 4),
@@ -218,13 +245,13 @@ repo_config = dict(
 )
 
 def detect_objects_yolo(image_path):
-    #Detect objects in image using YOLO
+    #Detecting objects in image using YOLO
     try:
-        if general_model is None:  # Use general_model instead of model
+        if general_model is None:
             return {"error": "YOLO model not available"}
         
         img = cv2.imread(image_path)
-        results = general_model(img)  # Use general_model
+        results = general_model(img)  
         labels = [general_model.names[int(cls)] for cls in results[0].boxes.cls]
         
         human_detected = "person" in labels
@@ -241,6 +268,33 @@ def detect_objects_yolo(image_path):
 aadhaar_model = YOLO(hf_hub_download(**repo_config))
 id2label = aadhaar_model.names
 print(id2label)
+
+
+# Verifying if the image is of frudulent Aadhar card or not using object detection
+def run_object_verification(image_path):
+    if object_detection_model is None:
+        return {"error": "Object detection model not available."}
+    
+    try:
+        results = object_detection_model(image_path)
+        detected_objects = []
+        is_tampered = False
+        
+        for r in results:
+            for box in r.boxes:
+                class_id = int(box.cls[0])
+                class_name = object_detection_model.names[class_id]
+                detected_objects.append(class_name)
+                if class_name == 'Tampered':
+                    is_tampered = True
+
+        return {
+            "detected_objects": list(set(detected_objects)),
+            "is_tampered": is_tampered
+        }
+    except Exception as e:
+        return {"error": f"Object verification failed: {str(e)}"}
+
 
 def extract_aadhaar_data(image_path):
     try:
@@ -316,13 +370,20 @@ def validate_aadhaar_number(aadhaar_data):
         return result
         
 def analyze_image(image_path):
+    object_detection_results = run_object_verification(image_path)
     results = {
+        "object_verification": object_detection_results,
         "exif_analysis": get_exif_data(image_path),
         "ssim_analysis": ssim_compare_with_temps(image_path),
         "ocr_analysis": extract_aadhaar_data(image_path),
         "object_detection": detect_objects_yolo(image_path),  # ADD THIS LINE
         "fraud_indicators": []
     }
+    
+    if "error" not in object_detection_results:
+        if object_detection_results.get("is_tampered"):
+            results["fraud_indicators"].append("Document marked as 'Tampered' by object detection model")
+            fraud_score += 4
 
     if "error" not in results["ocr_analysis"]:
         results["aadhaar_validation"] = validate_aadhaar_number(results["ocr_analysis"])
@@ -359,6 +420,17 @@ def analyze_image(image_path):
         "MODERATE FRAUD RISK" if fraud_score >= 1 else
         "LOW FRAUD RISK"
     )
+    
+    # saving the results to the firebase db
+    if db:
+        try:
+            results_with_timestamp = results.copy() # Avoid modifying the original dict
+            results_with_timestamp['timestamp'] = firestore.SERVER_TIMESTAMP
+            
+            db.collection('analyses').add(results_with_timestamp)
+            print("Analysis results saved to Firestore.")
+        except Exception as e:
+            print(f"Error saving to Firestore: {e}")
 
     return results
 

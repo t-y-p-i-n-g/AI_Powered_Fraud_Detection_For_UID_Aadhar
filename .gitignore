@@ -3,6 +3,12 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# firebase-credentials
+firebase-credentials.json
+
+# yolov8 zip files
+Tampering detection.v2i.yolov8.zip
+
 # C extensions
 *.so
 

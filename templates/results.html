@@ -1,223 +1,133 @@
-{% extends "base.html" %} {% block content %}
+{% extends "base.html" %} {% block title %}Analysis Results{% endblock %} {%
+block content %}
 <div class="text-center mb-4">
-  <h1 class="display-5">
-    <i class="fas fa-search-plus text-primary"></i>
-    Analysis Results
-  </h1>
+  <h1 class="text-dark">Aadhaar Analysis Report</h1>
   <p class="text-muted">File: {{ filename }}</p>
 </div>
 
-<!-- Overall Assessment -->
-<div
-  class="fraud-indicator {% if results.assessment == 'HIGH FRAUD RISK' %}high-risk{% elif results.assessment == 'MODERATE FRAUD RISK' %}moderate-risk{% else %}low-risk{% endif %}"
->
-  <div class="row align-items-center">
-    <div class="col-auto">
-      {% if results.assessment == 'HIGH FRAUD RISK' %}
-      <i class="fas fa-exclamation-triangle fa-2x"></i>
-      {% elif results.assessment == 'MODERATE FRAUD RISK' %}
-      <i class="fas fa-exclamation-circle fa-2x"></i>
-      {% else %}
-      <i class="fas fa-check-circle fa-2x"></i>
-      {% endif %}
-    </div>
-    <div class="col">
-      <h3 class="mb-1">{{ results.assessment }}</h3>
-      <p class="mb-0">Fraud Score: {{ results.fraud_score }}/5</p>
-    </div>
+{% if results.assessment == 'HIGH FRAUD RISK' %}
+<div class="fraud-indicator high-risk">
+  <i class="fas fa-exclamation-triangle fa-2x me-3"></i>
+  <div>
+    <h4 class="mb-0">{{ results.assessment }}</h4>
+    <span>Based on a fraud score of {{ results.fraud_score }}</span>
   </div>
 </div>
-
-<!-- Fraud Indicators -->
-{% if results.fraud_indicators %}
-<div class="analysis-card">
-  <h4 class="text-danger">
-    <i class="fas fa-flag me-2"></i>Fraud Indicators Found
-  </h4>
-  <ul class="list-group list-group-flush">
-    {% for indicator in results.fraud_indicators %}
-    <li class="list-group-item">
-      <i class="fas fa-exclamation-triangle text-warning me-2"></i>
-      {{ indicator }}
-    </li>
-    {% endfor %}
-  </ul>
+{% elif results.assessment == 'MODERATE FRAUD RISK' %}
+<div class="fraud-indicator moderate-risk">
+  <i class="fas fa-exclamation-circle fa-2x me-3"></i>
+  <div>
+    <h4 class="mb-0">{{ results.assessment }}</h4>
+    <span>Based on a fraud score of {{ results.fraud_score }}</span>
+  </div>
+</div>
+{% else %}
+<div class="fraud-indicator low-risk">
+  <i class="fas fa-check-circle fa-2x me-3"></i>
+  <div>
+    <h4 class="mb-0">{{ results.assessment }}</h4>
+    <span>Based on a fraud score of {{ results.fraud_score }}</span>
+  </div>
 </div>
 {% endif %}
 
-<!-- EXIF Analysis -->
-<div class="analysis-card">
-  <h4><i class="fas fa-camera text-info me-2"></i>EXIF Metadata Analysis</h4>
-  {% if results.exif_analysis and "error" not in results.exif_analysis %} {% if
-  results.exif_analysis %}
-  <div class="table-responsive">
-    <table class="table table-sm">
-      <thead>
-        <tr>
-          <th>Property</th>
-          <th>Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for key, value in results.exif_analysis.items() %}
-        <tr>
-          <td><strong>{{ key }}</strong></td>
-          <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="alert alert-warning">
-    <i class="fas fa-info-circle me-2"></i>
-    No EXIF metadata found. This could indicate digital manipulation.
-  </div>
-  {% endif %} {% else %}
-  <div class="alert alert-danger">
-    <i class="fas fa-exclamation-triangle me-2"></i>
-    EXIF Analysis Error: {{ results.exif_analysis.error if "error" in
-    results.exif_analysis else "Unknown error" }}
-  </div>
-  {% endif %}
-</div>
-
-<!-- OCR Analysis -->
-<div class="analysis-card">
-  <h3>📄 OCR Analysis</h3>
-  <div class="extracted-info">
-    <h4>Extracted Information:</h4>
-
-    <p>
-      <strong>Name:</strong>
-      {% if 'Name' in results.ocr_analysis %} {{ results.ocr_analysis['Name'] }}
-      {% else %} Not detected {% endif %}
-    </p>
-    <p>
-      <strong>Date of Birth:</strong>
-      {% if 'Date of Birth' in results.ocr_analysis %} {{
-      results.ocr_analysis['Date of Birth'] }} {% else %} Not detected {% endif
-      %}
-    </p>
-    <p>
-      <strong>Gender:</strong> {{ results.ocr_analysis.get('Gender', 'Not
-      detected') }}
-    </p>
-    <p>
-      <strong>Aadhaar Number:</strong>
-      {% if 'Aadhaar Number' in results.ocr_analysis %} {{
-      results.ocr_analysis['Aadhaar Number'] }} {% else %} Not detected {% endif
-      %}
-    </p>
-    {% if results.aadhaar_validation %}
-    <p>
-      <strong>Aadhaar Number Validation:</strong>
-      {% if results.aadhaar_validation.valid %}
-      <span class="badge bg-success">
-        ✅ {{ results.aadhaar_validation.reason }}
-      </span>
-      <br />
-      <small
-        >Cleaned Number: {{ results.aadhaar_validation.clean_number }}</small
-      >
-      {% else %}
-      <span class="badge bg-danger">
-        ❌ {{ results.aadhaar_validation.reason }}
-      </span>
-      {% endif %}
-    </p>
-    {% endif %}
-  </div>
-
-  <!-- Show Raw OCR Data for debugging -->
-  <details>
-    <summary>Show Raw OCR Text</summary>
-    <pre>{{ results.ocr_analysis }}</pre>
-  </details>
-  <details>
-    <summary>Aadhaar Number Validation Details</summary>
-    <pre>{{ results.aadhaar_validation }}</pre>
-  </details>
-</div>
-
-<!-- Object Detection -->
-<div class="analysis-card">
-  <h4><i class="fas fa-eye text-warning me-2"></i>Object Detection (YOLO)</h4>
-  {% if "error" not in results.object_detection %}
-  <div class="row">
-    <div class="col-md-6">
-      <strong>Detected Objects:</strong>
-      {% if results.object_detection.detected_objects %}
-      <div class="mt-2">
-        {% for obj in results.object_detection.detected_objects %}
-        <span class="badge bg-secondary me-1">{{ obj }}</span>
-        {% endfor %}
-      </div>
-      {% else %}
-      <p class="text-muted mt-2">No objects detected</p>
-      {% endif %}
-    </div>
-    <div class="col-md-6">
-      <strong>Human Detection:</strong>
-      <div class="mt-2">
-        {% if results.object_detection.human_detected %}
-        <span class="badge bg-success">
-          <i class="fas fa-user me-1"></i>Human Detected
-        </span>
+<div class="row">
+  <div class="col-lg-7">
+    <div class="analysis-card">
+      <h5><i class="fas fa-search me-2"></i>Custom Object Verification</h5>
+      <hr />
+      {% if results.object_verification and 'error' not in
+      results.object_verification %}
+      <p>
+        <strong>Tampering Detected:</strong>
+        {% if results.object_verification.is_tampered %}
+        <span class="badge bg-danger">🚨 Yes</span>
         {% else %}
-        <span class="badge bg-warning">
-          <i class="fas fa-user-slash me-1"></i>No Human Detected
-        </span>
+        <span class="badge bg-success">✅ No</span>
         {% endif %}
+      </p>
+      <p><strong>Detected Objects:</strong></p>
+      <div>
+        {% for obj in results.object_verification.detected_objects or [] %}
+        <span class="badge bg-primary me-2 mb-2">{{ obj }}</span>
+        {% else %}
+        <span class="text-muted">None</span>
+        {% endfor %}
       </div>
+      {% else %}
+      <p class="text-warning">
+        Could not run custom object verification analysis.
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="analysis-card">
+      <h5><i class="fas fa-keyboard me-2"></i>OCR & Aadhaar Validation</h5>
+      <hr />
+      {% if results.ocr_analysis and 'error' not in results.ocr_analysis %} {%
+      for key, value in results.ocr_analysis.items() %}
+      <p><strong>{{ key }}:</strong> <code>{{ value }}</code></p>
+      {% endfor %} {% if results.aadhaar_validation %}
+      <p>
+        <strong>Checksum Valid:</strong>
+        {% if results.aadhaar_validation.valid %}
+        <span class="badge bg-success">✅ Yes</span>
+        {% else %}
+        <span class="badge bg-danger">❌ No</span>
+        {% endif %} (Reason: {{ results.aadhaar_validation.reason }})
+      </p>
+      {% endif %} {% else %}
+      <p class="text-warning">Could not extract text via OCR.</p>
+      {% endif %}
     </div>
   </div>
-  {% else %}
-  <div class="alert alert-warning">
-    <i class="fas fa-exclamation-triangle me-2"></i>
-    Object Detection Error: {{ results.object_detection.error }}
+
+  <div class="col-lg-5">
+    <div class="analysis-card">
+      <h5><i class="fas fa-flag me-2"></i>Fraud Indicators</h5>
+      <hr />
+      {% if results.fraud_indicators %}
+      <ul class="list-group list-group-flush">
+        {% for indicator in results.fraud_indicators %}
+        <li class="list-group-item text-danger">
+          <i class="fas fa-exclamation-triangle me-2"></i>{{ indicator }}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-success">✅ No specific fraud indicators were found.</p>
+      {% endif %}
+    </div>
+
+    <div class="analysis-card">
+      <h5><i class="fas fa-shield-alt me-2"></i>Image Integrity</h5>
+      <hr />
+      {% if results.ssim_analysis %}
+      <p>
+        <strong>SSIM Score:</strong>
+        <span class="fw-bold"
+          >{{ results.ssim_analysis.best_score | round(2) }}</span
+        >
+      </p>
+      {% endif %} {% if results.exif_analysis %}
+      <p>
+        <strong>EXIF Data Found:</strong>
+        {% if results.exif_analysis and 'error' not in results.exif_analysis and
+        results.exif_analysis|length > 0 %}
+        <span class="badge bg-success">Yes</span>
+        {% else %}
+        <span class="badge bg-warning">No</span>
+        {% endif %}
+      </p>
+      {% endif %}
+    </div>
   </div>
-  {% endif %}
-</div>
-
-<!-- SSIM Analysis -->
-<div class="analysis-card">
-  <h4><i class="fas fa-equals text-success me-2"></i>SSIM Analysis</h4>
-
-  {% if results.ssim_analysis %}
-  <p>
-    <strong>Best Match Template:</strong>
-    {{ results.ssim_analysis.best_match_template }}
-  </p>
-  <p>
-    <strong>Best SSIM Score:</strong>
-    {{ results.ssim_analysis.best_score | round(2) }}
-  </p>
-  <p>
-    <strong>Validity:</strong>
-    {% if results.ssim_analysis.validity %}
-    <span class="badge bg-success">✅ Valid Layout</span>
-    {% else %}
-    <span class="badge bg-danger">❌ Possible Tampering</span>
-    {% endif %}
-  </p>
-
-  <details>
-    <summary>Show All SSIM Scores</summary>
-    <pre>{{ results.ssim_analysis.all_scores }}</pre>
-  </details>
-  {% else %}
-  <div class="alert alert-warning">
-    <i class="fas fa-info-circle me-2"></i>
-    SSIM analysis not available.
-  </div>
-  {% endif %}
 </div>
 
 <div class="text-center mt-4">
-  <a href="{{ url_for('home') }}" class="btn btn-primary btn-lg">
-    <i class="fas fa-upload me-2"></i>
-    Analyze Another Image
+  <a href="/" class="btn btn-analyze">
+    <i class="fas fa-arrow-left me-2"></i>Analyze Another Image
   </a>
 </div>
+
 {% endblock %}
