@@ -14,6 +14,8 @@ from huggingface_hub import hf_hub_download
 from supervision import Detections
 import requests
 from skimage.metrics import structural_similarity as ssim
+import xml.etree.ElementTree as ET
+from pyzbar.pyzbar import decode
 
 
 import firebase_admin
@@ -122,113 +124,113 @@ def get_exif_data(image_path):
         return {"error": str(e)}
     
     
-# Calculating the Structural Similarity Index Measure (SSIM)
+# # Calculating the Structural Similarity Index Measure (SSIM)
 
-# Since SSIM is very sensitive to scaling and alingment, we need to align the template image and the image given by the user
-def align_images(img1, img2, max_features=500, keep_percent=0.2):
-    # Aligning images using ORB feature matching and homography
-    orb = cv2.ORB.create(max_features)
-    kps1, descs1 = orb.detectAndCompute(img1, None)
-    kps2, descs2 = orb.detectAndCompute(img2, None)
+# # Since SSIM is very sensitive to scaling and alingment, we need to align the template image and the image given by the user
+# def align_images(img1, img2, max_features=500, keep_percent=0.2):
+#     # Aligning images using ORB feature matching and homography
+#     orb = cv2.ORB.create(max_features)
+#     kps1, descs1 = orb.detectAndCompute(img1, None)
+#     kps2, descs2 = orb.detectAndCompute(img2, None)
     
-    if descs1 is None or descs2 is None:
-        raise ValueError(f"Could not find enough keypoints for alignment")
+#     if descs1 is None or descs2 is None:
+#         raise ValueError(f"Could not find enough keypoints for alignment")
     
-    matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = matcher.match(descs1, descs2)
-    matches = sorted(matches, key= lambda x: x.distance)
-    keep = int(len(matches) * keep_percent)
-    matches = matches[:keep]
+#     matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+#     matches = matcher.match(descs1, descs2)
+#     matches = sorted(matches, key= lambda x: x.distance)
+#     keep = int(len(matches) * keep_percent)
+#     matches = matches[:keep]
     
-    pts1 = np.float32([kps1[m.queryIdx].pt for m in matches])
-    pts2 = np.float32([kps2[m.queryIdx].pt for m in matches])
+#     pts1 = np.float32([kps1[m.queryIdx].pt for m in matches])
+#     pts2 = np.float32([kps2[m.queryIdx].pt for m in matches])
     
-    H, _ = cv2.findHomography(pts1, pts2, cv2.RANSAC)
-    h, w = img2.shape[:2]
-    aligned = cv2.warpPerspective(img1, H, (w, h))
-    return aligned
+#     H, _ = cv2.findHomography(pts1, pts2, cv2.RANSAC)
+#     h, w = img2.shape[:2]
+#     aligned = cv2.warpPerspective(img1, H, (w, h))
+#     return aligned
 
-def ssim_preprocess_image(image_path, gray = True):
-    img = cv2.imread(image_path)
+# def ssim_preprocess_image(image_path, gray = True):
+#     img = cv2.imread(image_path)
     
-    if img is None:
-        raise ValueError(f"Could not read image from the source: {image_path}")
+#     if img is None:
+#         raise ValueError(f"Could not read image from the source: {image_path}")
     
-    if gray:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+#     if gray:
+#         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     
-    return img
+#     return img
 
-ROIS = {
-    "aadhaar_number": (0.25, 0.75, 0.75, 0.90),
-    "dob": (0.05, 0.50, 0.35, 0.60),
-    "gender": (0.40, 0.50, 0.55, 0.60),
-    "name": (0.05, 0.35, 0.60, 0.45),
-    "logo": (0.05, 0.05, 0.25, 0.20)
-}
+# ROIS = {
+#     "aadhaar_number": (0.25, 0.75, 0.75, 0.90),
+#     "dob": (0.05, 0.50, 0.35, 0.60),
+#     "gender": (0.40, 0.50, 0.55, 0.60),
+#     "name": (0.05, 0.35, 0.60, 0.45),
+#     "logo": (0.05, 0.05, 0.25, 0.20)
+# }
 
-def extract_roi(img, roi_box):
-    h, w = img.shape[:2]
-    x1 = int(roi_box[0] * w)
-    y1 = int(roi_box[1] * h)
-    x2 = int(roi_box[2] * w)
-    y2 = int(roi_box[3] * h)
-    return img[y1:y2, x1:x2]
+# def extract_roi(img, roi_box):
+#     h, w = img.shape[:2]
+#     x1 = int(roi_box[0] * w)
+#     y1 = int(roi_box[1] * h)
+#     x2 = int(roi_box[2] * w)
+#     y2 = int(roi_box[3] * h)
+#     return img[y1:y2, x1:x2]
 
-def ssim_compare_with_temps(input_image_path, templates_dir="templates/aadhar_templates", threshold = 0.75):
-    input_img = ssim_preprocess_image(input_image_path)
+# def ssim_compare_with_temps(input_image_path, templates_dir="templates/aadhar_templates", threshold = 0.75):
+#     input_img = ssim_preprocess_image(input_image_path)
     
-    results = {}
-    best_match = None
-    best_score = -1
+#     results = {}
+#     best_match = None
+#     best_score = -1
     
-    for template_file in os.listdir(templates_dir):
-        template_path = os.path.join(templates_dir, template_file)
+#     for template_file in os.listdir(templates_dir):
+#         template_path = os.path.join(templates_dir, template_file)
         
-        template_img = ssim_preprocess_image(template_path, gray=True)
+#         template_img = ssim_preprocess_image(template_path, gray=True)
         
-        try:
-            aligned_input = align_images(input_img, template_img)
-        except Exception as e:
-            print(f"Aligment failed for {template_img}: {e}")
+#         try:
+#             aligned_input = align_images(input_img, template_img)
+#         except Exception as e:
+#             print(f"Aligment failed for {template_img}: {e}")
         
-        roi_scores = {}
-        roi_ssims = []
+#         roi_scores = {}
+#         roi_ssims = []
         
-        for roi_name, roi_box in ROIS.items():
-            try:
-                roi_input = extract_roi(aligned_input, roi_box)
-                roi_template = extract_roi(template_img, roi_box)
+#         for roi_name, roi_box in ROIS.items():
+#             try:
+#                 roi_input = extract_roi(aligned_input, roi_box)
+#                 roi_template = extract_roi(template_img, roi_box)
                 
-                if roi_input.size == 0 or roi_template.size == 0:
-                    continue
+#                 if roi_input.size == 0 or roi_template.size == 0:
+#                     continue
                 
-                roi_score, _ = ssim(roi_input, roi_template, full=True)
-                roi_scores[roi_name] = roi_score
-                roi_ssims.append(roi_score)
-            except Exception as e:
-                roi_scores[roi_name] = f"Error : {e}"
+#                 roi_score, _ = ssim(roi_input, roi_template, full=True)
+#                 roi_scores[roi_name] = roi_score
+#                 roi_ssims.append(roi_score)
+#             except Exception as e:
+#                 roi_scores[roi_name] = f"Error : {e}"
         
-        if roi_ssims:
-            avg_score = float(np.mean(roi_ssims))
-            results[template_file] = {"avg_score": avg_score, "roi_scores": roi_scores}
+#         if roi_ssims:
+#             avg_score = float(np.mean(roi_ssims))
+#             results[template_file] = {"avg_score": avg_score, "roi_scores": roi_scores}
         
     
-        if avg_score > best_score:
-            best_score = avg_score
-            best_match = template_file
+#         if avg_score > best_score:
+#             best_score = avg_score
+#             best_match = template_file
     
-    is_valid = best_score >= threshold
+#     is_valid = best_score >= threshold
     
-    results_arr = [best_match, best_score, results, is_valid]
-    print(results_arr)
+#     results_arr = [best_match, best_score, results, is_valid]
+#     print(results_arr)
     
-    return {
-        "best_match_template": best_match,
-        "best_score": best_score,
-        "all_scores": results,
-        "validity": is_valid
-    }
+#     return {
+#         "best_match_template": best_match,
+#         "best_score": best_score,
+#         "all_scores": results,
+#         "validity": is_valid
+#     }
     
 # Loading general object detection model (YOLO v8)
 try:
@@ -294,6 +296,36 @@ def run_object_verification(image_path):
         }
     except Exception as e:
         return {"error": f"Object verification failed: {str(e)}"}
+
+
+
+def decode_aadhaar_qr(image_path):
+    #Decodes the QR code from an Aadhaar card image and parses the XML data.
+    try:
+        image = Image.open(image_path)
+        decoded_objects = decode(image)
+        
+        if not decoded_objects:
+            return {"error": "QR Code not found or could not be read."}
+            
+        # The data is in the first decoded object
+        qr_data_raw = decoded_objects[0].data.decode('utf-8')
+        
+        # Parse the XML data
+        root = ET.fromstring(qr_data_raw)
+        
+        # Extract attributes from the 'PrintLetterBarcodeData' tag
+        qr_attributes = root.attrib
+        
+        return {
+            "name": qr_attributes.get("name"),
+            "dob": qr_attributes.get("dob"),
+            "gender": qr_attributes.get("gender"),
+            "uid": qr_attributes.get("uid"), # This is the Aadhaar Number
+            "raw_xml": qr_data_raw # For debugging
+        }
+    except Exception as e:
+        return {"error": f"QR Code processing failed: {str(e)}"}
 
 
 def extract_aadhaar_data(image_path):
@@ -369,19 +401,43 @@ def validate_aadhaar_number(aadhaar_data):
         print(f"Validation error: {result}")
         return result
         
-def analyze_image(image_path):
-    object_detection_results = run_object_verification(image_path)
+def analyze_aadhar_pair(front_path, back_path):
+    # running the text extaction model on both front and back images
+    
+    front_ocr_results = extract_aadhaar_data(front_path)
+    back_ocr_results = extract_aadhaar_data(back_path)
+    combined_ocr_results = front_ocr_results
+    if "Address" in back_ocr_results:
+        combined_ocr_results["Address"] = back_ocr_results["Address"]
+        
+    
+    # running tamper detection on front
+    object_results_front = run_object_verification(front_path)
+    
+    # running tamper detection on back
+    object_results_back = run_object_verification(back_path)
+    
+    # running exif on both front and back
+    exif_results_front = get_exif_data(front_path)
+    exif_results_back = get_exif_data(back_path)
+
+    # qr code analysis
+    qr_results = decode_aadhaar_qr(back_path)
+    
     results = {
-        "object_verification": object_detection_results,
-        "exif_analysis": get_exif_data(image_path),
-        "ssim_analysis": ssim_compare_with_temps(image_path),
-        "ocr_analysis": extract_aadhaar_data(image_path),
-        "object_detection": detect_objects_yolo(image_path),  # ADD THIS LINE
+        "object_verification_front": object_results_front,
+        "object_verification_back": object_results_back,
+        "exif_analysis_front": exif_results_front,
+        "exif_analysis_back": exif_results_back,
+        "ocr_analysis": combined_ocr_results,
+        "object_detection_front": detect_objects_yolo(front_path),  
+        "object_detection_back": detect_objects_yolo(back_path),
+        "qr_analysis": qr_results,
         "fraud_indicators": []
     }
     
-    if "error" not in object_detection_results:
-        if object_detection_results.get("is_tampered"):
+    if "error" not in "object_detection_front":
+        if "object_detection_front".get("is_tampered"):
             results["fraud_indicators"].append("Document marked as 'Tampered' by object detection model")
             fraud_score += 4
 
@@ -390,14 +446,6 @@ def analyze_image(image_path):
 
     fraud_score = 0
     
-    # ssim results
-    ssim_res = results["ssim_analysis"]
-    if not ssim_res["validity"]:
-        results["fraud_indicators"].append(
-            f"Low SSIM Score ({ssim_res['best_score']:.2f} with templates → Possible Tampering)"
-        )
-        fraud_score += 2
-
     # Check object detection for fraud indicators
     if "error" not in results["object_detection"]:
         if results["object_detection"].get("fraud_indicator"):
@@ -441,29 +489,33 @@ def home():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
-        flash('No file selected')
+    if 'front_image' not in request.files or 'back_image' not in request.files:
+        flash('Please upload both front and back of the Aadhar card')
         return redirect(request.url)
     
-    file = request.files['file']
+    front_file = request.files['font_image']
+    back_file = request.files['back_image']
     
-    if file.filename == '':
-        flash('No file selected')
+    if front_file.filename == '' or back_file.filename == '':
+        flash('Either one or both images are missing')
         return redirect(request.url)
     
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
+    if (front_file and allowed_file(front_file.filename)) and (back_file and allowed_file(back_file.filename)):
+        filename = secure_filename(front_file.filename)
         
-
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1])
-        tmp_file_path = tmp_file.name
-        tmp_file.close() 
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(front_file.filename)[1]) as tmp_front:
+            front_file.save(tmp_front.name)
+            front_path = tmp_front.name
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(back_file.filename)[1]) as tmp_back:
+            back_file.save(tmp_back.name)
+            back_path = tmp_back.name
+            
         
         try:
-            file.save(tmp_file_path)
-            
             # Analyzing the image
-            analysis_results = analyze_image(tmp_file_path)
+            analysis_results = analyze_aadhar_pair(front_path, back_path)
             
             return render_template('results.html', 
                                  results=analysis_results, 
@@ -471,7 +523,8 @@ def upload_file():
         finally:
         
             try:
-                os.unlink(tmp_file_path)
+                os.unlink(front_path)
+                os.unlink(back_path)
             except OSError:
                 pass  
     else:
@@ -497,7 +550,7 @@ def api_analyze():
     
     try:
         file.save(tmp_file_path)
-        analysis_results = analyze_image(tmp_file_path)
+        analysis_results = analyze_aadhar_pair(tmp_file_path)
         return jsonify(analysis_results)
     finally:
         try:
