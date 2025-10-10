@@ -32,15 +32,50 @@ block content %}
 {% endif %}
 
 <div class="row">
+  <div class="col-md-6">
+    <div class="analysis-card text-center">
+      <h5>Annotated Front Image</h5>
+      <hr />
+      {% if annotated_image_filename_front %}
+      <img
+        src="{{ url_for('static', filename=annotated_image_filename_front) }}"
+        class="img-fluid rounded"
+        alt="Annotated Front of Aadhaar Card"
+      />
+      {% else %}
+      <p class="text-muted">Annotated front image not available.</p>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="analysis-card text-center">
+      <h5>Annotated Back Image</h5>
+      <hr />
+      {% if annotated_image_filename_back %}
+      <img
+        src="{{ url_for('static', filename=annotated_image_filename_back) }}"
+        class="img-fluid rounded"
+        alt="Annotated Back of Aadhaar Card"
+      />
+      {% else %}
+      <p class="text-muted">Annotated back image not available.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="row">
   <div class="col-lg-7">
     <div class="analysis-card">
-      <h5><i class="fas fa-search me-2"></i>Custom Object Verification</h5>
+      <h5>
+        <i class="fas fa-search me-2"></i>Custom Object Verification (Front)
+      </h5>
       <hr />
-      {% if results.object_verification and 'error' not in
-      results.object_verification %}
+      {% if results.front.object_verification and 'error' not in
+      results.front.object_verification %}
       <p>
         <strong>Tampering Detected:</strong>
-        {% if results.object_verification.is_tampered %}
+        {% if results.front.object_verification.is_tampered %}
         <span class="badge bg-danger">🚨 Yes</span>
         {% else %}
         <span class="badge bg-success">✅ No</span>
@@ -48,7 +83,8 @@ block content %}
       </p>
       <p><strong>Detected Objects:</strong></p>
       <div>
-        {% for obj in results.object_verification.detected_objects or [] %}
+        {% for obj in results.front.object_verification.detected_objects or []
+        %}
         <span class="badge bg-primary me-2 mb-2">{{ obj }}</span>
         {% else %}
         <span class="text-muted">None</span>
@@ -62,10 +98,26 @@ block content %}
     </div>
 
     <div class="analysis-card">
+      <h5>Object Detection Results</h5>
+      <hr />
+      {% if results.front.face_detection and 'error' not in
+      results.front.face_detection and
+      results.front.face_detection.detected_objects %} {% for key, value in
+      results.front.face_detection.items() %}
+      <p>
+        <strong>{{ key|replace('_', ' ')|capitalize }}:</strong>
+        <code>{{ value }}</code>
+      </p>
+      {% endfor %} {% else %}
+      <p class="text-warning">Could not detect objects using YOLO.</p>
+      {% endif %}
+    </div>
+
+    <div class="analysis-card">
       <h5><i class="fas fa-keyboard me-2"></i>OCR & Aadhaar Validation</h5>
       <hr />
-      {% if results.ocr_analysis and 'error' not in results.ocr_analysis %} {%
-      for key, value in results.ocr_analysis.items() %}
+      {% if results.combined_ocr and 'error' not in results.combined_ocr %} {%
+      for key, value in results.combined_ocr.items() %}
       <p><strong>{{ key }}:</strong> <code>{{ value }}</code></p>
       {% endfor %} {% if results.aadhaar_validation %}
       <p>
@@ -84,6 +136,21 @@ block content %}
 
   <div class="col-lg-5">
     <div class="analysis-card">
+      <h5><i class="fas fa-qrcode me-2"></i>QR Code Analysis (Back)</h5>
+      <hr />
+      {% if results.back.qr_analysis and 'error' not in results.back.qr_analysis
+      %} {% for key, value in results.back.qr_analysis.items() if key !=
+      'raw_xml' %}
+      <p><strong>{{ key|capitalize }}:</strong> <code>{{ value }}</code></p>
+      {% endfor %} {% else %}
+      <p class="text-warning">
+        {{ results.back.qr_analysis.error if results.back.qr_analysis else 'QR
+        analysis failed.' }}
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="analysis-card">
       <h5><i class="fas fa-flag me-2"></i>Fraud Indicators</h5>
       <hr />
       {% if results.fraud_indicators %}
@@ -96,29 +163,6 @@ block content %}
       </ul>
       {% else %}
       <p class="text-success">✅ No specific fraud indicators were found.</p>
-      {% endif %}
-    </div>
-
-    <div class="analysis-card">
-      <h5><i class="fas fa-shield-alt me-2"></i>Image Integrity</h5>
-      <hr />
-      {% if results.ssim_analysis %}
-      <p>
-        <strong>SSIM Score:</strong>
-        <span class="fw-bold"
-          >{{ results.ssim_analysis.best_score | round(2) }}</span
-        >
-      </p>
-      {% endif %} {% if results.exif_analysis %}
-      <p>
-        <strong>EXIF Data Found:</strong>
-        {% if results.exif_analysis and 'error' not in results.exif_analysis and
-        results.exif_analysis|length > 0 %}
-        <span class="badge bg-success">Yes</span>
-        {% else %}
-        <span class="badge bg-warning">No</span>
-        {% endif %}
-      </p>
       {% endif %}
     </div>
   </div>

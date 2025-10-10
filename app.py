@@ -16,6 +16,7 @@ import requests
 from skimage.metrics import structural_similarity as ssim
 import xml.etree.ElementTree as ET
 from pyzbar.pyzbar import decode
+import supervision as sv
 
 
 import firebase_admin
@@ -124,114 +125,6 @@ def get_exif_data(image_path):
         return {"error": str(e)}
     
     
-# # Calculating the Structural Similarity Index Measure (SSIM)
-
-# # Since SSIM is very sensitive to scaling and alingment, we need to align the template image and the image given by the user
-# def align_images(img1, img2, max_features=500, keep_percent=0.2):
-#     # Aligning images using ORB feature matching and homography
-#     orb = cv2.ORB.create(max_features)
-#     kps1, descs1 = orb.detectAndCompute(img1, None)
-#     kps2, descs2 = orb.detectAndCompute(img2, None)
-    
-#     if descs1 is None or descs2 is None:
-#         raise ValueError(f"Could not find enough keypoints for alignment")
-    
-#     matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-#     matches = matcher.match(descs1, descs2)
-#     matches = sorted(matches, key= lambda x: x.distance)
-#     keep = int(len(matches) * keep_percent)
-#     matches = matches[:keep]
-    
-#     pts1 = np.float32([kps1[m.queryIdx].pt for m in matches])
-#     pts2 = np.float32([kps2[m.queryIdx].pt for m in matches])
-    
-#     H, _ = cv2.findHomography(pts1, pts2, cv2.RANSAC)
-#     h, w = img2.shape[:2]
-#     aligned = cv2.warpPerspective(img1, H, (w, h))
-#     return aligned
-
-# def ssim_preprocess_image(image_path, gray = True):
-#     img = cv2.imread(image_path)
-    
-#     if img is None:
-#         raise ValueError(f"Could not read image from the source: {image_path}")
-    
-#     if gray:
-#         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-#     return img
-
-# ROIS = {
-#     "aadhaar_number": (0.25, 0.75, 0.75, 0.90),
-#     "dob": (0.05, 0.50, 0.35, 0.60),
-#     "gender": (0.40, 0.50, 0.55, 0.60),
-#     "name": (0.05, 0.35, 0.60, 0.45),
-#     "logo": (0.05, 0.05, 0.25, 0.20)
-# }
-
-# def extract_roi(img, roi_box):
-#     h, w = img.shape[:2]
-#     x1 = int(roi_box[0] * w)
-#     y1 = int(roi_box[1] * h)
-#     x2 = int(roi_box[2] * w)
-#     y2 = int(roi_box[3] * h)
-#     return img[y1:y2, x1:x2]
-
-# def ssim_compare_with_temps(input_image_path, templates_dir="templates/aadhar_templates", threshold = 0.75):
-#     input_img = ssim_preprocess_image(input_image_path)
-    
-#     results = {}
-#     best_match = None
-#     best_score = -1
-    
-#     for template_file in os.listdir(templates_dir):
-#         template_path = os.path.join(templates_dir, template_file)
-        
-#         template_img = ssim_preprocess_image(template_path, gray=True)
-        
-#         try:
-#             aligned_input = align_images(input_img, template_img)
-#         except Exception as e:
-#             print(f"Aligment failed for {template_img}: {e}")
-        
-#         roi_scores = {}
-#         roi_ssims = []
-        
-#         for roi_name, roi_box in ROIS.items():
-#             try:
-#                 roi_input = extract_roi(aligned_input, roi_box)
-#                 roi_template = extract_roi(template_img, roi_box)
-                
-#                 if roi_input.size == 0 or roi_template.size == 0:
-#                     continue
-                
-#                 roi_score, _ = ssim(roi_input, roi_template, full=True)
-#                 roi_scores[roi_name] = roi_score
-#                 roi_ssims.append(roi_score)
-#             except Exception as e:
-#                 roi_scores[roi_name] = f"Error : {e}"
-        
-#         if roi_ssims:
-#             avg_score = float(np.mean(roi_ssims))
-#             results[template_file] = {"avg_score": avg_score, "roi_scores": roi_scores}
-        
-    
-#         if avg_score > best_score:
-#             best_score = avg_score
-#             best_match = template_file
-    
-#     is_valid = best_score >= threshold
-    
-#     results_arr = [best_match, best_score, results, is_valid]
-#     print(results_arr)
-    
-#     return {
-#         "best_match_template": best_match,
-#         "best_score": best_score,
-#         "all_scores": results,
-#         "validity": is_valid
-#     }
-    
 # Loading general object detection model (YOLO v8)
 try:
     general_model = YOLO("yolov8n.pt")
@@ -273,22 +166,19 @@ print(id2label)
 
 
 # Verifying if the image is of frudulent Aadhar card or not using object detection
-def run_object_verification(image_path):
+def run_object_verification(image_path, object_model_raw_results):
     if object_detection_model is None:
         return {"error": "Object detection model not available."}
     
     try:
-        results = object_detection_model(image_path)
         detected_objects = []
         is_tampered = False
         
-        for r in results:
-            for box in r.boxes:
-                class_id = int(box.cls[0])
-                class_name = object_detection_model.names[class_id]
-                detected_objects.append(class_name)
-                if class_name == 'Tampered':
-                    is_tampered = True
+        for box in object_model_raw_results.boxes:
+            class_id = int(box.cls[0])
+            class_name = object_detection_model.names[class_id]
+            detected_objects.append(class_name)
+            if class_name == 'Tampered': is_tampered = True
 
         return {
             "detected_objects": list(set(detected_objects)),
@@ -300,7 +190,6 @@ def run_object_verification(image_path):
 
 
 def decode_aadhaar_qr(image_path):
-    #Decodes the QR code from an Aadhaar card image and parses the XML data.
     try:
         image = Image.open(image_path)
         decoded_objects = decode(image)
@@ -308,65 +197,62 @@ def decode_aadhaar_qr(image_path):
         if not decoded_objects:
             return {"error": "QR Code not found or could not be read."}
             
-        # The data is in the first decoded object
-        qr_data_raw = decoded_objects[0].data.decode('utf-8')
+        qr_data_raw = decoded_objects[0].data.decode('utf-8', errors='ignore')
         
-        # Parse the XML data
-        root = ET.fromstring(qr_data_raw)
-        
-        # Extract attributes from the 'PrintLetterBarcodeData' tag
-        qr_attributes = root.attrib
-        
-        return {
-            "name": qr_attributes.get("name"),
-            "dob": qr_attributes.get("dob"),
-            "gender": qr_attributes.get("gender"),
-            "uid": qr_attributes.get("uid"), # This is the Aadhaar Number
-            "raw_xml": qr_data_raw # For debugging
-        }
+        try:
+            root = ET.fromstring(qr_data_raw)
+            qr_attributes = root.attrib
+            return {
+                "name": qr_attributes.get("name"),
+                "dob": qr_attributes.get("dob"),
+                "gender": qr_attributes.get("gender"),
+                "uid": qr_attributes.get("uid"),
+            }
+        except ET.ParseError:
+            return {"error": "QR data is not valid XML.", "raw_data": qr_data_raw}
+            
     except Exception as e:
         return {"error": f"QR Code processing failed: {str(e)}"}
 
 
-def extract_aadhaar_data(image_path):
+def extract_aadhaar_data(image_path, text_model_raw_results):
     try:
-        # Running the detection using Aadhaar-specific YOLO model
-        results = aadhaar_model.predict(image_path, verbose=False)[0]
-        detections = Detections.from_ultralytics(results)
-        
+        detections = Detections.from_ultralytics(text_model_raw_results)
         image = np.array(Image.open(image_path))
-        
         aadhaar_data = {}
-        
         key_mapping = {
             'NAME': 'Name',
             'AADHAR_NUMBER': 'Aadhaar Number',
             'GENDER': 'Gender',
-            'DATE_OF_BIRTH': 'Date of Birth'
+            'DATE_OF_BIRTH': 'Date of Birth',
+            'ADDRESS': 'Address'
         }
         
-        print(f"Detected classes: {detections.data['class_name']}") 
-        
         for bbox, cls_name in zip(detections.xyxy, detections.data['class_name']):
-            x1, y1, x2, y2 = map(int, bbox) # bounding box coords
-            roi = image[y1:y2, x1:x2]   # crop region from original image
-            
+            x1, y1, x2, y2 = map(int, bbox)
+            roi = image[y1:y2, x1:x2]
             if roi.size == 0:
-                continue    # skipping empty crops
-        
-            # OCR on region of interest (roi) 
+                continue
+
+            # --- FIX: Define a custom config for Tesseract ---
+            config = '--psm 6' # A good default for other fields
+            cls_name_str = str(cls_name)
+            
+            if cls_name_str == 'AADHAR_NUMBER':
+                # Use a specific, stricter config for the Aadhaar number
+                config = '--psm 7 -c tessedit_char_whitelist=0123456789 '
+            
+            # OCR on the region of interest with the specified config
             text = pytesseract.image_to_string(
-                roi, lang="eng+hin"  
+                roi,
+                lang="eng+hin",
+                config=config  # Apply the custom config here
             ).strip()
             
-            cls_name_str = str(cls_name)
             normalized_key = key_mapping.get(cls_name_str, cls_name_str)
-            
-            print(f"Original key: {cls_name_str} -> Normalized: {normalized_key} -> Text: {text}")
-            
             aadhaar_data[normalized_key] = text
-        
-        print(f"Final Aadhar Data: {aadhaar_data}")
+            
+        print(f"Final Aadhaar Data: {aadhaar_data}")
         return aadhaar_data
     except Exception as e:
         return {"error": f"OCR failed: {str(e)}"}
@@ -400,22 +286,56 @@ def validate_aadhaar_number(aadhaar_data):
         result = {"valid":False, "reason":f"Error: {str(e)}"}
         print(f"Validation error: {result}")
         return result
+    
+
+def create_annotated_image(image_path, text_model_results, object_model_results):
+    try:
+        image = cv2.imread(image_path)
+        
+        # Annotations from the text extraction model (Blue boxes)
+        text_detections = Detections.from_ultralytics(text_model_results)
+        text_box_annotator = sv.BoxAnnotator(color=sv.Color.BLUE, thickness=2)
+        text_label_annotator = sv.LabelAnnotator(color=sv.Color.BLUE, text_color=sv.Color.WHITE, text_scale=0.5)
+        
+        image = text_box_annotator.annotate(scene=image.copy(), detections=text_detections)
+        image = text_label_annotator.annotate(scene=image, detections=text_detections)
+
+        # Annotations from your custom object verification model (Red boxes)
+        object_detections = Detections.from_ultralytics(object_model_results)
+        object_box_annotator = sv.BoxAnnotator(color=sv.Color.RED, thickness=2)
+        object_label_annotator = sv.LabelAnnotator(color=sv.Color.RED, text_color=sv.Color.WHITE, text_scale=0.5)
+
+        image = object_box_annotator.annotate(scene=image, detections=object_detections)
+        image = object_label_annotator.annotate(scene=image, detections=object_detections)
+        
+        # Saving the annotated image to the static folder
+        annotated_filename = "annotated_" + os.path.basename(image_path)
+        save_path = os.path.join('static', annotated_filename)
+        cv2.imwrite(save_path, image)
+        
+        return annotated_filename
+    except Exception as e:
+        print(f"Error creating annotated image: {e}")
+        return None
+
         
 def analyze_aadhar_pair(front_path, back_path):
     # running the text extaction model on both front and back images
+    text_model_raw_results_front = aadhaar_model.predict(front_path, verbose=False)[0]
+    text_model_raw_results_back = aadhaar_model.predict(back_path, verbose=False)[0]
     
-    front_ocr_results = extract_aadhaar_data(front_path)
-    back_ocr_results = extract_aadhaar_data(back_path)
-    combined_ocr_results = front_ocr_results
-    if "Address" in back_ocr_results:
-        combined_ocr_results["Address"] = back_ocr_results["Address"]
+    front_ocr_results = extract_aadhaar_data(front_path, text_model_raw_results_front)
+    back_ocr_results = extract_aadhaar_data(back_path, text_model_raw_results_back)
+    
         
     
     # running tamper detection on front
-    object_results_front = run_object_verification(front_path)
+    object_model_raw_results_front = object_detection_model(front_path, verbose=False)[0]
+    object_results_front = run_object_verification(front_path, object_model_raw_results_front)
     
     # running tamper detection on back
-    object_results_back = run_object_verification(back_path)
+    object_model_raw_results_back = object_detection_model(back_path, verbose=False)[0]
+    object_results_back = run_object_verification(back_path, object_model_raw_results_back)
     
     # running exif on both front and back
     exif_results_front = get_exif_data(front_path)
@@ -424,37 +344,99 @@ def analyze_aadhar_pair(front_path, back_path):
     # qr code analysis
     qr_results = decode_aadhaar_qr(back_path)
     
+    general_model_results_front = general_model(front_path, verbose=False)[0]
+    
+    general_labels = [general_model.names[int(cls)] for cls in general_model_results_front.boxes.cls]
+    human_detected = "person" in general_labels
     results = {
-        "object_verification_front": object_results_front,
-        "object_verification_back": object_results_back,
-        "exif_analysis_front": exif_results_front,
-        "exif_analysis_back": exif_results_back,
-        "ocr_analysis": combined_ocr_results,
-        "object_detection_front": detect_objects_yolo(front_path),  
-        "object_detection_back": detect_objects_yolo(back_path),
-        "qr_analysis": qr_results,
-        "fraud_indicators": []
+        "front": {
+            "object_verification": object_results_front,
+            "exif_analysis": exif_results_front,
+            "ocr_analysis": front_ocr_results,   
+            "face_detection": {"human_detected": human_detected, "detected_objects": general_labels},
+        },
+        "back": {
+            "object_verification": object_results_back,
+            "exif_analysis": exif_results_back,
+            "ocr_analysis": back_ocr_results,
+            "qr_analysis": qr_results,
+            "general_detection": {"human_detected":human_detected, "detected_objects": general_labels}   
+        },
+        "fraud_indicators": [],
+        "raw_results": {
+            "text_front": text_model_raw_results_front,
+            "text_back": text_model_raw_results_back,
+            "object_front": object_model_raw_results_front,
+            "object_back": object_model_raw_results_back
+        }
     }
     
-    if "error" not in "object_detection_front":
-        if "object_detection_front".get("is_tampered"):
-            results["fraud_indicators"].append("Document marked as 'Tampered' by object detection model")
-            fraud_score += 4
-
-    if "error" not in results["ocr_analysis"]:
-        results["aadhaar_validation"] = validate_aadhaar_number(results["ocr_analysis"])
-
+    combined_ocr_results = front_ocr_results.copy()
+    if "Address" in back_ocr_results:
+        combined_ocr_results["Address"] = back_ocr_results["Address"]
+    results['combined_ocr'] = combined_ocr_results
+    
+    
     fraud_score = 0
     
+    if "error" not in object_results_front and object_results_front.get("is_tampered"):
+        results["fraud_indicators"].append("Tampered region detected on the front of the card.")
+        fraud_score += 3
+        
+    if not human_detected:
+        results["fraud_indicators"].append("No human detected in the photo area (possible fake document).")
+        fraud_score += 1
+
+    if "error" not in combined_ocr_results and "error" not in qr_results:
+        ocr_name = combined_ocr_results.get("Name", "").strip().lower()
+        qr_name = qr_results.get("name", "").strip().lower()
+        if ocr_name and qr_name and ocr_name not in qr_name:
+             results["fraud_indicators"].append("Mismatch: Printed Name vs. QR Code Name.")
+             fraud_score += 3
+             
+        # for gender
+        ocr_gender = combined_ocr_results.get("Gender", "").strip.lower()
+        qr_gender = qr_results.get("gender", "").strip().lower()
+        if ocr_gender and qr_gender and ocr_gender not in qr_gender and qr_gender not in ocr_gender:
+             results["fraud_indicators"].append("Mismatch between printed gender and QR code name.")
+             fraud_score += 1
+        
+        # for dob
+        ocr_dob_raw = combined_ocr_results.get("DATE_OF_BIRTH", "")
+        ocr_dob = ocr_dob_raw.replace("-", "/").strip()
+        qr_dob = qr_results.get("dob", "").replace("-","/").strip()
+        if((ocr_dob and qr_dob) and (ocr_dob != qr_dob)):
+             results["fraud_indicators"].append("Mismatch between printed date of birth (DOB) and QR date of birth (DOB).")
+             fraud_score += 1
+        
+        # for aadhar number
+        ocr_num = combined_ocr_results.get("AADHAR_NUMBER", "").strip().lower()
+        qr_num = qr_results.get("aadhar_num", "").strip().lower()
+        if ocr_num and qr_num and ocr_num not in qr_num and qr_num not in ocr_num:
+             results["fraud_indicators"].append("Mismatch between printed date of birth (DOB) and QR date of birth (DOB).")
+             fraud_score += 1
+        
+        # for address
+        ocr_address = combined_ocr_results.get("ADDRESS", "").strip().lower()
+        qr_address = qr_results.get("address", "").strip().lower()
+        if ocr_address and qr_address and ocr_address not in qr_address and qr_address not in ocr_address:
+             results["fraud_indicators"].append("Mismatch between printed address and QR code address.")
+             fraud_score += 1
+
+
+    if "error" not in results["front"]["ocr_analysis"]:
+        results["aadhaar_validation"] = validate_aadhaar_number(results["front"]["ocr_analysis"])
+
+    
     # Check object detection for fraud indicators
-    if "error" not in results["object_detection"]:
-        if results["object_detection"].get("fraud_indicator"):
+    if "error" not in object_results_front:
+        if object_results_front.get("fraud_indicator"):
             results["fraud_indicators"].append("No human detected in image (possible fake document)")
             fraud_score += 1
 
-    if not results["exif_analysis"] or len(results["exif_analysis"]) == 0:
-        results["fraud_indicators"].append("No EXIF metadata found (possible digital manipulation)")
-        fraud_score += 1
+    if(("error" not in exif_results_front or len(results["exif_analysis_front"]) == 0) or ("error" not in exif_results_back or len(results["exif_analysis_back"]) == 0)):
+        results["fraud_indicators"].append("No EXIF metadata found")
+        fraud_score += 0
 
     if "aadhaar_validation" in results and not results["aadhaar_validation"]["valid"]:
         results["fraud_indicators"].append(
@@ -472,10 +454,15 @@ def analyze_aadhar_pair(front_path, back_path):
     # saving the results to the firebase db
     if db:
         try:
-            results_with_timestamp = results.copy() # Avoid modifying the original dict
-            results_with_timestamp['timestamp'] = firestore.SERVER_TIMESTAMP
+            results_for_firestore = results.copy()
             
-            db.collection('analyses').add(results_with_timestamp)
+            # removing the key that contains raw YOLO objects
+            if 'raw_results' in results_for_firestore:
+                del results_for_firestore['raw_results']
+            
+            results_for_firestore['timestamp'] = firestore.SERVER_TIMESTAMP
+            
+            db.collection('analyses').add(results_for_firestore)
             print("Analysis results saved to Firestore.")
         except Exception as e:
             print(f"Error saving to Firestore: {e}")
@@ -493,7 +480,7 @@ def upload_file():
         flash('Please upload both front and back of the Aadhar card')
         return redirect(request.url)
     
-    front_file = request.files['font_image']
+    front_file = request.files['front_image']
     back_file = request.files['back_image']
     
     if front_file.filename == '' or back_file.filename == '':
@@ -517,11 +504,18 @@ def upload_file():
             # Analyzing the image
             analysis_results = analyze_aadhar_pair(front_path, back_path)
             
+            # creating annotated images using raw results from the analysis
+            raw = analysis_results['raw_results']
+            annotated_image_filename_front = create_annotated_image(front_path, raw['text_front'], raw['object_front'])
+            
+            annotated_image_filename_back = create_annotated_image(back_path, raw['text_back'], raw['object_back'])
+            
             return render_template('results.html', 
-                                 results=analysis_results, 
-                                 filename=filename)
+                                 results=analysis_results,
+                                 filename=f"{front_file.filename} & {back_file.filename}",
+                                 annotated_image_filename_front=annotated_image_filename_front,
+                                 annotated_image_filename_back=annotated_image_filename_back)
         finally:
-        
             try:
                 os.unlink(front_path)
                 os.unlink(back_path)
