@@ -52,7 +52,7 @@ You need to have Python 3.8+ and Tesseract OCR installed on your system.
       * [Tesseract at UB Mannheim](https://www.google.com/search?q=https://github.com/UB-Mannheim/tesseract/wiki)
 
     **Important:** During installation on Windows, make sure to add Tesseract to your system's PATH.
-    **Note:** TesseractOCR supports multiple Indian languages. This project only extracts text in English and Hindi. For a wider language support, download the corresponding language packs from Tesseract's official webpage. 
+* **Note:** TesseractOCR supports multiple Indian languages. This project only extracts text in English and Hindi. For a wider language support, download the corresponding language packs from Tesseract's official webpage. 
 
 ### Installation
 
