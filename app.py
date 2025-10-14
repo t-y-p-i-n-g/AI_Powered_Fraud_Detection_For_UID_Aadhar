@@ -21,17 +21,39 @@ import supervision as sv
 
 import firebase_admin
 from firebase_admin import credentials, firestore
+import json
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Initializing Firebase 
 try:
-    cred = credentials.Certificate("firebase-credentials.json")
+    # Check for the Hugging Face secret first
+    creds_json_str = os.getenv('FIREBASE_CREDENTIALS_JSON')
+    if creds_json_str:
+        print("Loading Firebase credentials from environment variable (for deployment).")
+        creds_dict = json.loads(creds_json_str)
+        cred = credentials.Certificate(creds_dict)
+    else:
+        # If not found, fall back to the local file path from .env
+        local_creds_path = os.getenv('FIREBASE_CREDS_PATH')
+        if local_creds_path and os.path.exists(local_creds_path):
+            print(f"Loading Firebase credentials from local file: {local_creds_path}")
+            cred = credentials.Certificate(local_creds_path)
+        else:
+            raise FileNotFoundError("Firebase credentials not found in environment or local .env file.")
+
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     print("Successfully connected to Firebase.")
+
 except Exception as e:
     print(f"Error connecting to Firebase: {e}")
     db = None
+    
 
+# Initializing tesseract
 tesseract_path = os.getenv("TESSERACT_PATH", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
