@@ -1,178 +1,168 @@
-// File state
-let frontFile = null;
-let backFile = null;
-
-// Initialize drag and drop
 document.addEventListener("DOMContentLoaded", function () {
+  // --- Get all DOM elements once ---
   const frontZone = document.getElementById("front-drop-zone");
   const backZone = document.getElementById("back-drop-zone");
+  const frontUploadInput = document.getElementById("front-upload");
+  const backUploadInput = document.getElementById("back-upload");
+  const analyzeBtn = document.getElementById("analyze-btn");
+  const statusEl = document.getElementById("upload-status");
 
-  // Front card drag and drop
-  ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
-    frontZone.addEventListener(eventName, preventDefaults, false);
-    backZone.addEventListener(eventName, preventDefaults, false);
-  });
+  // --- Helper function to update the UI for a file input ---
+  function updateFileDisplay(zoneId, file) {
+    const uploadContent = document.getElementById(`${zoneId}-upload-content`);
+    const fileInfo = document.getElementById(`${zoneId}-file-info`);
+    const fileNameEl = document.getElementById(`${zoneId}-file-name`);
+    const fileSizeEl = document.getElementById(`${zoneId}-file-size`);
+    const zone = document.getElementById(`${zoneId}-drop-zone`);
 
-  function preventDefaults(e) {
-    e.preventDefault();
-    e.stopPropagation();
+    if (file) {
+      uploadContent.classList.add("hidden");
+      fileInfo.classList.remove("hidden");
+      zone.classList.remove("border-slate-300", "bg-slate-50");
+      zone.classList.add("border-green-500", "bg-green-50");
+      fileNameEl.textContent = file.name;
+      fileSizeEl.textContent = (file.size / 1024).toFixed(2) + " KB";
+    } else {
+      uploadContent.classList.remove("hidden");
+      fileInfo.classList.add("hidden");
+      zone.classList.remove("border-green-500", "bg-green-50");
+      zone.classList.add("border-slate-300", "bg-slate-50");
+    }
   }
 
-  // Highlight on drag
-  ["dragenter", "dragover"].forEach((eventName) => {
-    frontZone.addEventListener(eventName, () => highlightFront(true), false);
-    backZone.addEventListener(eventName, () => highlightBack(true), false);
+  function checkFormValidity() {
+    if (frontUploadInput.files.length > 0 && backUploadInput.files.length > 0) {
+      analyzeBtn.disabled = false;
+    } else {
+      analyzeBtn.disabled = true;
+    }
+  }
+
+  // Helper to show a transient status message to the user
+  function showStatusMessage(msg, timeoutMs = 3000) {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.classList.remove("text-red-600");
+    statusEl.classList.add("text-green-600");
+    clearTimeout(showStatusMessage._t);
+    showStatusMessage._t = setTimeout(
+      () => (statusEl.textContent = ""),
+      timeoutMs
+    );
+  }
+
+  // --- Change listeners ---
+  frontUploadInput.addEventListener("change", () => {
+    if (frontUploadInput.files.length > 0) {
+      const file = frontUploadInput.files[0];
+      updateFileDisplay("front", file);
+      console.log(
+        `✅ Front image accepted: ${file.name} (${(file.size / 1024).toFixed(
+          2
+        )} KB)`
+      );
+      showStatusMessage(`Front image "${file.name}" uploaded successfully.`);
+    } else {
+      updateFileDisplay("front", null);
+    }
+    checkFormValidity();
   });
 
-  ["dragleave", "drop"].forEach((eventName) => {
-    frontZone.addEventListener(eventName, () => highlightFront(false), false);
-    backZone.addEventListener(eventName, () => highlightBack(false), false);
+  backUploadInput.addEventListener("change", () => {
+    if (backUploadInput.files.length > 0) {
+      const file = backUploadInput.files[0];
+      updateFileDisplay("back", file);
+      console.log(
+        `✅ Back image accepted: ${file.name} (${(file.size / 1024).toFixed(
+          2
+        )} KB)`
+      );
+      showStatusMessage(`Back image "${file.name}" uploaded successfully.`);
+    } else {
+      updateFileDisplay("back", null);
+    }
+    checkFormValidity();
   });
 
-  // Handle drops
-  frontZone.addEventListener("drop", handleFrontDrop, false);
-  backZone.addEventListener("drop", handleBackDrop, false);
+  // Handle drag and drop events
+  ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+    [frontZone, backZone].forEach((zone) => {
+      zone.addEventListener(
+        eventName,
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        },
+        false
+      );
+    });
+  });
 
-  // Click to upload
-  frontZone.addEventListener("click", () =>
-    document.getElementById("front-upload").click()
-  );
-  backZone.addEventListener("click", () =>
-    document.getElementById("back-upload").click()
-  );
+  // Handle file drop
+  frontZone.addEventListener("drop", (e) => {
+    frontUploadInput.files = e.dataTransfer.files;
+    frontUploadInput.dispatchEvent(new Event("change"));
+  });
+
+  backZone.addEventListener("drop", (e) => {
+    backUploadInput.files = e.dataTransfer.files;
+    backUploadInput.dispatchEvent(new Event("change"));
+  });
+
+  document.getElementById("upload-form").addEventListener("click", (e) => {
+    const button = e.target.closest("button");
+    if (!button) return;
+
+    const onclickAttr = button.getAttribute("onclick");
+
+    if (onclickAttr) {
+      // Handle inline onclick functions
+      e.stopPropagation();
+
+      if (onclickAttr.includes("front-upload")) {
+        frontUploadInput.click();
+      } else if (onclickAttr.includes("back-upload")) {
+        backUploadInput.click();
+      } else if (onclickAttr.includes("removeFrontFile")) {
+        frontUploadInput.value = "";
+        frontUploadInput.dispatchEvent(new Event("change"));
+      } else if (onclickAttr.includes("removeBackFile")) {
+        backUploadInput.value = "";
+        backUploadInput.dispatchEvent(new Event("change"));
+      }
+      return;
+    }
+  });
+
+  // Make drop zones clickable, but ignore if clicking on interactive elements
+  frontZone.addEventListener("click", (e) => {
+    // Ignore clicks on buttons, inputs, or their children
+    if (e.target.closest("button") || e.target.closest("input")) {
+      return;
+    }
+    frontUploadInput.click();
+  });
+
+  backZone.addEventListener("click", (e) => {
+    // Ignore clicks on buttons, inputs, or their children
+    if (e.target.closest("button") || e.target.closest("input")) {
+      return;
+    }
+    backUploadInput.click();
+  });
 });
 
-function highlightFront(highlight) {
-  const zone = document.getElementById("front-drop-zone");
-  if (highlight) {
-    zone.classList.add("border-blue-500", "bg-blue-50");
-    zone.classList.remove("border-slate-300", "bg-slate-50");
-  } else if (!frontFile) {
-    zone.classList.remove("border-blue-500", "bg-blue-50");
-    zone.classList.add("border-slate-300", "bg-slate-50");
-  }
-}
-
-function highlightBack(highlight) {
-  const zone = document.getElementById("back-drop-zone");
-  if (highlight) {
-    zone.classList.add("border-blue-500", "bg-blue-50");
-    zone.classList.remove("border-slate-300", "bg-slate-50");
-  } else if (!backFile) {
-    zone.classList.remove("border-blue-500", "bg-blue-50");
-    zone.classList.add("border-slate-300", "bg-slate-50");
-  }
-}
-
-function handleFrontDrop(e) {
-  const dt = e.dataTransfer;
-  const files = dt.files;
-  if (files.length > 0) {
-    handleFrontFile(files[0]);
-  }
-}
-
-function handleBackDrop(e) {
-  const dt = e.dataTransfer;
-  const files = dt.files;
-  if (files.length > 0) {
-    handleBackFile(files[0]);
-  }
-}
-
-function handleFrontFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
-    alert("Please upload an image file");
-    return;
-  }
-
-  frontFile = file;
-  const zone = document.getElementById("front-drop-zone");
-  zone.classList.remove(
-    "border-slate-300",
-    "bg-slate-50",
-    "hover:border-blue-400",
-    "hover:bg-blue-50/50"
-  );
-  zone.classList.add("border-green-500", "bg-green-50");
-
-  document.getElementById("front-upload-content").classList.add("hidden");
-  document.getElementById("front-file-info").classList.remove("hidden");
-  document.getElementById("front-file-name").textContent = file.name;
-  document.getElementById("front-file-size").textContent =
-    (file.size / 1024).toFixed(2) + " KB";
-
-  checkFormValidity();
-}
-
-function handleBackFile(file) {
-  if (!file || !file.type.startsWith("image/")) {
-    alert("Please upload an image file");
-    return;
-  }
-
-  backFile = file;
-  const zone = document.getElementById("back-drop-zone");
-  zone.classList.remove(
-    "border-slate-300",
-    "bg-slate-50",
-    "hover:border-blue-400",
-    "hover:bg-blue-50/50"
-  );
-  zone.classList.add("border-green-500", "bg-green-50");
-
-  document.getElementById("back-upload-content").classList.add("hidden");
-  document.getElementById("back-file-info").classList.remove("hidden");
-  document.getElementById("back-file-name").textContent = file.name;
-  document.getElementById("back-file-size").textContent =
-    (file.size / 1024).toFixed(2) + " KB";
-
-  checkFormValidity();
-}
-
-function removeFrontFile() {
+// Keep these for backward compatibility with HTML onclick attributes
+function removeFrontFile(event) {
   event.stopPropagation();
-  frontFile = null;
-  const zone = document.getElementById("front-drop-zone");
-  zone.classList.remove("border-green-500", "bg-green-50");
-  zone.classList.add(
-    "border-slate-300",
-    "bg-slate-50",
-    "hover:border-blue-400",
-    "hover:bg-blue-50/50"
-  );
-
-  document.getElementById("front-upload-content").classList.remove("hidden");
-  document.getElementById("front-file-info").classList.add("hidden");
-  document.getElementById("front-upload").value = "";
-
-  checkFormValidity();
+  const input = document.getElementById("front-upload");
+  input.value = "";
+  input.dispatchEvent(new Event("change"));
 }
 
-function removeBackFile() {
+function removeBackFile(event) {
   event.stopPropagation();
-  backFile = null;
-  const zone = document.getElementById("back-drop-zone");
-  zone.classList.remove("border-green-500", "bg-green-50");
-  zone.classList.add(
-    "border-slate-300",
-    "bg-slate-50",
-    "hover:border-blue-400",
-    "hover:bg-blue-50/50"
-  );
-
-  document.getElementById("back-upload-content").classList.remove("hidden");
-  document.getElementById("back-file-info").classList.add("hidden");
-  document.getElementById("back-upload").value = "";
-
-  checkFormValidity();
-}
-
-function checkFormValidity() {
-  const analyzeBtn = document.getElementById("analyze-btn");
-  if (frontFile && backFile) {
-    analyzeBtn.disabled = false;
-  } else {
-    analyzeBtn.disabled = true;
-  }
+  const input = document.getElementById("back-upload");
+  input.value = "";
+  input.dispatchEvent(new Event("change"));
 }

@@ -195,16 +195,21 @@ def run_object_verification(image_path, object_model_raw_results):
     try:
         detected_objects = []
         is_tampered = False
+        confidences = []
         
         for box in object_model_raw_results.boxes:
             class_id = int(box.cls[0])
             class_name = object_detection_model.names[class_id]
+            confidence = float(box.conf[0])
+            
             detected_objects.append(class_name)
             if class_name == 'Tampered': is_tampered = True
+            confidences.append(confidence)
 
         return {
             "detected_objects": list(set(detected_objects)),
-            "is_tampered": is_tampered
+            "is_tampered": is_tampered,
+            "confidences":confidences
         }
     except Exception as e:
         return {"error": f"Object verification failed: {str(e)}"}
@@ -242,6 +247,8 @@ def extract_aadhaar_data(image_path, text_model_raw_results):
         detections = Detections.from_ultralytics(text_model_raw_results)
         image = np.array(Image.open(image_path))
         aadhaar_data = {}
+        confidences = []
+        
         key_mapping = {
             'NAME': 'Name',
             'AADHAR_NUMBER': 'Aadhaar Number',
@@ -250,7 +257,8 @@ def extract_aadhaar_data(image_path, text_model_raw_results):
             'ADDRESS': 'Address'
         }
         
-        for bbox, cls_name in zip(detections.xyxy, detections.data['class_name']):
+        for bbox, conf, cls_name in zip(detections.xyxy, detections.confidence, detections.data['class_name']):
+            confidences.append(float(conf))
             x1, y1, x2, y2 = map(int, bbox)
             roi = image[y1:y2, x1:x2]
             if roi.size == 0:
@@ -275,7 +283,7 @@ def extract_aadhaar_data(image_path, text_model_raw_results):
             aadhaar_data[normalized_key] = text
             
         print(f"Final Aadhaar Data: {aadhaar_data}")
-        return aadhaar_data
+        return {"data": aadhaar_data, "confidences": confidences}
     except Exception as e:
         return {"error": f"OCR failed: {str(e)}"}
 
@@ -359,6 +367,20 @@ def analyze_aadhar_pair(front_path, back_path):
     object_model_raw_results_back = object_detection_model(back_path, verbose=False)[0]
     object_results_back = run_object_verification(back_path, object_model_raw_results_back)
     
+    # confidence scores
+    all_confidences = []
+    if object_model_raw_results_front.boxes:
+        all_confidences.extend(object_model_raw_results_front.boxes.conf.tolist())
+    if object_model_raw_results_back.boxes:
+        all_confidences.extend(object_model_raw_results_back.boxes.conf.tolist())
+    if text_model_raw_results_front.boxes:
+        all_confidences.extend(text_model_raw_results_front.boxes.conf.tolist())
+    if text_model_raw_results_back.boxes:
+        all_confidences.extend(text_model_raw_results_back.boxes.conf.tolist())
+        
+    # calculating average confidence
+    average_confidence = np.mean(all_confidences) if all_confidences else 0.0
+    
     # running exif on both front and back
     exif_results_front = get_exif_data(front_path)
     exif_results_back = get_exif_data(back_path)
@@ -374,16 +396,17 @@ def analyze_aadhar_pair(front_path, back_path):
         "front": {
             "object_verification": object_results_front,
             "exif_analysis": exif_results_front,
-            "ocr_analysis": front_ocr_results,   
+            "ocr_analysis": front_ocr_results.get("data", {}),   
             "face_detection": {"human_detected": human_detected, "detected_objects": general_labels},
         },
         "back": {
             "object_verification": object_results_back,
             "exif_analysis": exif_results_back,
-            "ocr_analysis": back_ocr_results,
+            "ocr_analysis": back_ocr_results.get("data", []),
             "qr_analysis": qr_results,
             "general_detection": {"human_detected":human_detected, "detected_objects": general_labels}   
         },
+        "average_confidence": average_confidence,
         "fraud_indicators": [],
         "raw_results": {
             "text_front": text_model_raw_results_front,
@@ -492,9 +515,82 @@ def analyze_aadhar_pair(front_path, back_path):
     return results
 
 
+def transform_results_for_template(results):   
+    # --- Overall Assessment ---
+    risk_level = results.get('assessment', 'UNKNOWN').replace(" FRAUD RISK", "")
+    risk_score = int(results.get('fraud_score', 0) * 20) # Convert a score out of 5 to a percentage
+
+    color_map = {
+        'HIGH': 'border-red-500 text-red-900 bg-red-50',
+        'MODERATE': 'border-amber-500 text-amber-900 bg-amber-50',
+        'LOW': 'border-green-500 text-green-900 bg-green-50',
+        'UNKNOWN': 'border-slate-500 text-slate-900 bg-slate-50'
+    }
+    
+    # --- Fraud Indicators ---
+    indicators = []
+    for desc in results.get('fraud_indicators', []):
+        severity = 'high' if "mismatch" in desc.lower() or "tampered" in desc.lower() else 'medium'
+        badge_map = {'high': 'border-red-300 bg-red-100 text-red-800', 'medium': 'border-amber-300 bg-amber-100 text-amber-800'}
+        indicators.append({
+            "type": desc.split(':')[0],
+            "severity": severity,
+            "description": desc,
+            "badge_class": badge_map.get(severity, '')
+        })
+
+    # --- Front Card OCR ---
+    ocr_front_data = results.get('front', {}).get('ocr_analysis', {})
+    ocr_front_list = [
+        {"label": "Name", "value": ocr_front_data.get("Name", "N/A"), "icon": "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"},
+        {"label": "Date of Birth", "value": ocr_front_data.get("Date of Birth", "N/A"), "icon": "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"},
+        {"label": "Gender", "value": ocr_front_data.get("Gender", "N/A"), "icon": "M13 10V3L4 14h7v7l9-11h-7z"},
+        {"label": "Aadhaar Number", "value": ocr_front_data.get("Aadhaar Number", "N/A"), "icon": "M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-1.026.977-2.19.977-3.418a8 8 0 10-15.828-1.55A8 8 0 004 12c0-4.418 3.582-8 8-8s8 3.582 8 8z"},
+    ]
+
+    # --- Back Card Data ---
+    qr_analysis = results.get('back', {}).get('qr_analysis', {})
+    qr_data_list = []
+    if 'error' not in qr_analysis:
+        for key, val in qr_analysis.items():
+            qr_data_list.append({"label": key.capitalize(), "value": val})
+            
+    # --- Metadata ---
+    exif_analysis = results.get('front', {}).get('exif_analysis', {})
+    metadata_fields = []
+    if 'error' not in exif_analysis:
+        for key, val in exif_analysis.items():
+            metadata_fields.append({"label": str(key), "value": str(val), "warning": "Software" in str(key)})
+
+    transformed_data = {
+        'risk_level': risk_level,
+        'risk_score': risk_score,
+        'confidence_score': int(results.get('average_confidence', 0)*100),
+        'risk_color_class': color_map.get(risk_level, 'border-slate-500'),
+        'fraud_indicators': indicators,
+        'ocr_status': "Success" if 'error' not in ocr_front_data else "Failed",
+        'ocr_message': f"{len(ocr_front_data)} fields extracted" if 'error' not in ocr_front_data else "Extraction failed",
+        'qr_status': "Decoded" if 'error' not in qr_analysis else "Failed",
+        'qr_message': "Data successfully parsed" if 'error' not in qr_analysis else qr_analysis.get('error', 'Unknown error'),
+        'exif_status': "Found" if exif_analysis and 'error' not in exif_analysis else "Not Found",
+        'exif_message': f"{len(exif_analysis)} fields found" if exif_analysis and 'error' not in exif_analysis else "No EXIF data",
+        'ocr_front': ocr_front_list,
+        'ocr_address': results.get('combined_ocr', {}).get('Address', 'N/A'),
+        'qr_decode_status': "Success" if 'error' not in qr_analysis else "Failed",
+        'qr_data_items': qr_data_list,
+        'qr_mismatch': any("Mismatch" in indicator for indicator in results.get('fraud_indicators', [])),
+        'metadata_warning': any("Software" in str(field.get('label', '')) for field in metadata_fields),
+        'metadata_warning_title': "Editing Software Detected",
+        'metadata_warning_text': "The image metadata contains tags indicating it was processed by editing software, which can be a sign of digital manipulation.",
+        'metadata_fields_left': metadata_fields[::2], # Split fields into two columns
+        'metadata_fields_right': metadata_fields[1::2]
+    }
+    return transformed_data
+
+
 @app.route('/')
 def home():
-    return render_template('index.html')
+    return render_template('upload.html')
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -523,20 +619,23 @@ def upload_file():
             
         
         try:
-            # Analyzing the image
+            # Running the full, complex analysis
             analysis_results = analyze_aadhar_pair(front_path, back_path)
             
-            # creating annotated images using raw results from the analysis
+            # Transforming the results as per the template
+            template_data = transform_results_for_template(analysis_results)
+            
+            # Creating annotated images
             raw = analysis_results['raw_results']
             annotated_image_filename_front = create_annotated_image(front_path, raw['text_front'], raw['object_front'])
-            
             annotated_image_filename_back = create_annotated_image(back_path, raw['text_back'], raw['object_back'])
             
-            return render_template('results.html', 
-                                 results=analysis_results,
-                                 filename=f"{front_file.filename} & {back_file.filename}",
-                                 annotated_image_filename_front=annotated_image_filename_front,
-                                 annotated_image_filename_back=annotated_image_filename_back)
+            # adding annotated image paths to template data
+            template_data['front_annotated_image'] = url_for('static', filename=annotated_image_filename_front) if annotated_image_filename_front else None
+            template_data['back_annotated_image'] = url_for('static', filename=annotated_image_filename_back) if annotated_image_filename_back else None
+            
+            # render the results
+            return render_template('results.html', **template_data)
         finally:
             try:
                 os.unlink(front_path)
@@ -547,7 +646,7 @@ def upload_file():
         flash('Invalid file type. Please upload an image file.')
         return redirect(request.url)
 
-@app.route('/api/analyze', methods=['POST'])
+@app.route('/analyze', methods=['POST'])
 def api_analyze():
     """API endpoint for programmatic access"""
     if 'file' not in request.files:

@@ -33,7 +33,9 @@
             </svg>
           </div>
           <div>
-            <h1 class="text-xl text-slate-900">AI Aadhaar Fraud Detection</h1>
+            <h1 class="text-xl text-slate-900">
+              AI-Powered Fraud Detection for Aadhar
+            </h1>
             <p class="text-sm text-slate-500">
               Intelligent Document Verification System
             </p>
@@ -63,7 +65,7 @@
                 d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
               />
             </svg>
-            <span class="text-sm">Secure & Confidential</span>
+            <span class="text-sm">Fast & Trustworthy</span>
           </div>
           <h2 class="text-3xl text-slate-900 mb-3">
             Upload Aadhaar Card for Analysis
@@ -78,7 +80,7 @@
         <!-- Upload Form -->
         <form
           id="upload-form"
-          action="/analyze"
+          action="/upload"
           method="POST"
           enctype="multipart/form-data"
         >
@@ -135,7 +137,7 @@
                     <button
                       type="button"
                       class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors"
-                      onclick="document.getElementById('front-upload').click()"
+                      onclick="event.stopPropagation(); document.getElementById('front-upload').click()"
                     >
                       Browse Files
                     </button>
@@ -165,7 +167,7 @@
                     <button
                       type="button"
                       class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors"
-                      onclick="removeFrontFile()"
+                      onclick="removeFrontFile(event)"
                     >
                       Remove
                     </button>
@@ -173,10 +175,9 @@
                   <input
                     type="file"
                     id="front-upload"
-                    name="front_card"
+                    name="front_image"
                     class="hidden"
                     accept="image/*"
-                    onchange="handleFrontFile(this.files[0])"
                   />
                 </div>
               </div>
@@ -233,7 +234,7 @@
                     <button
                       type="button"
                       class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors"
-                      onclick="document.getElementById('back-upload').click()"
+                      onclick="event.stopPropagation();document.getElementById('back-upload').click()"
                     >
                       Browse Files
                     </button>
@@ -263,7 +264,7 @@
                     <button
                       type="button"
                       class="inline-flex items-center px-4 py-2 border border-slate-300 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors"
-                      onclick="removeBackFile()"
+                      onclick="removeBackFile(event)"
                     >
                       Remove
                     </button>
@@ -271,10 +272,9 @@
                   <input
                     type="file"
                     id="back-upload"
-                    name="back_card"
+                    name="back_image"
                     class="hidden"
                     accept="image/*"
-                    onchange="handleBackFile(this.files[0])"
                   />
                 </div>
               </div>
@@ -298,11 +298,15 @@
                 />
               </svg>
               <p class="text-slate-700 text-sm">
-                All uploaded documents are processed securely and are not stored
-                permanently. The analysis typically takes 5-10 seconds.
+                All uploaded documents are processed securely. The analysis
+                typically takes 5-10 seconds.
               </p>
             </div>
           </div>
+          <!--Check status-->
+          <div id="upload-status" class="text-center text-sm mt-4"></div>
+
+          <br />
 
           <!-- Analyze Button -->
           <div class="flex justify-center">
