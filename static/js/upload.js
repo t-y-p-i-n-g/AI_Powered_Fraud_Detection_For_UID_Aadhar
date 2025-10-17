@@ -51,6 +51,119 @@ document.addEventListener("DOMContentLoaded", function () {
     );
   }
 
+  // // --- NEW: Handle form submission with AJAX ---
+  // uploadForm.addEventListener("submit", function (e) {
+  //   e.preventDefault(); // Prevent default form submission
+
+  //   // Show analyzing page immediately
+  //   showAnalyzingPage();
+
+  //   // Create FormData from the form
+  //   const formData = new FormData(uploadForm);
+
+  //   // Submit the form via AJAX
+  //   fetch("/upload", {
+  //     method: "POST",
+  //     body: formData,
+  //   })
+  //     .then((response) => {
+  //       if (!response.ok) {
+  //         throw new Error("Analysis failed");
+  //       }
+  //       return response.text();
+  //     })
+  //     .then((html) => {
+  //       // Replace current page with results page
+  //       document.open();
+  //       document.write(html);
+  //       document.close();
+  //     })
+  //     .catch((error) => {
+  //       console.error("Error:", error);
+  //       alert("Analysis failed. Please try again.");
+  //       // Reload the page to reset
+  //       window.location.reload();
+  //     });
+  // });
+
+  // // --- NEW: Function to show analyzing page ---
+  // function showAnalyzingPage() {
+  //   document.body.innerHTML = `
+  //     <div class="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-slate-50 flex items-center justify-center">
+  //       <div class="text-center">
+  //         <div class="inline-flex items-center justify-center w-20 h-20 bg-blue-600 rounded-full mb-6 animate-pulse">
+  //           <svg class="h-10 w-10 text-white animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+  //           </svg>
+  //         </div>
+  //         <h2 class="text-2xl text-slate-900 mb-2">Analyzing Aadhaar Card</h2>
+  //         <p class="text-slate-600 mb-6">Running AI-powered fraud detection algorithms...</p>
+  //         <div class="max-w-md mx-auto space-y-2" id="progress-steps">
+  //           <div class="flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-blue-200 bg-blue-50">
+  //             <span>Uploading Images</span>
+  //             <span class="text-blue-600">⟳ In Progress</span>
+  //           </div>
+  //           <div class="flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-slate-200">
+  //             <span>OCR Processing</span>
+  //             <span class="text-slate-400">○ Pending</span>
+  //           </div>
+  //           <div class="flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-slate-200">
+  //             <span>QR Code Decoding</span>
+  //             <span class="text-slate-400">○ Pending</span>
+  //           </div>
+  //           <div class="flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-slate-200">
+  //             <span>Visual Analysis</span>
+  //             <span class="text-slate-400">○ Pending</span>
+  //           </div>
+  //           <div class="flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-slate-200">
+  //             <span>Metadata Extraction</span>
+  //             <span class="text-slate-400">○ Pending</span>
+  //           </div>
+  //         </div>
+  //       </div>
+  //     </div>
+  //   `;
+
+  //   // Animate progress steps
+  //   animateProgressSteps();
+  // }
+
+  // // --- NEW: Animate the progress steps ---
+  // function animateProgressSteps() {
+  //   const steps = [
+  //     { delay: 500, index: 0, text: "Uploading Images" },
+  //     { delay: 2000, index: 1, text: "OCR Processing" },
+  //     { delay: 4000, index: 2, text: "QR Code Decoding" },
+  //     { delay: 6000, index: 3, text: "Visual Analysis" },
+  //     { delay: 8000, index: 4, text: "Metadata Extraction" },
+  //   ];
+
+  //   steps.forEach((step) => {
+  //     setTimeout(() => {
+  //       const container = document.getElementById("progress-steps");
+  //       if (!container) return;
+
+  //       const stepElements = container.children;
+
+  //       // Mark previous steps as complete
+  //       for (let i = 0; i < step.index; i++) {
+  //         stepElements[i].className =
+  //           "flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-green-200 bg-green-50";
+  //         stepElements[i].querySelector("span:last-child").innerHTML =
+  //           '<span class="text-green-600">✓ Complete</span>';
+  //       }
+
+  //       // Mark current step as in progress
+  //       if (stepElements[step.index]) {
+  //         stepElements[step.index].className =
+  //           "flex items-center justify-between text-sm text-slate-600 px-4 py-2 bg-white rounded-lg border border-blue-200 bg-blue-50";
+  //         stepElements[step.index].querySelector("span:last-child").innerHTML =
+  //           '<span class="text-blue-600">⟳ In Progress</span>';
+  //       }
+  //     }, step.delay);
+  //   });
+  // }
+
   // --- Change listeners ---
   frontUploadInput.addEventListener("change", () => {
     if (frontUploadInput.files.length > 0) {

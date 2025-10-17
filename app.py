@@ -17,7 +17,9 @@ from skimage.metrics import structural_similarity as ssim
 import xml.etree.ElementTree as ET
 from pyzbar.pyzbar import decode
 import supervision as sv
-
+from pyzbar.pyzbar import decode
+from pyaadhaar.utils import isSecureQr
+from pyaadhaar.decode import AadhaarSecureQr
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -215,33 +217,37 @@ def run_object_verification(image_path, object_model_raw_results):
         return {"error": f"Object verification failed: {str(e)}"}
 
 
-
+#======================================================================================
 def decode_aadhaar_qr(image_path):
     try:
-        image = Image.open(image_path)
-        decoded_objects = decode(image)
+        img = cv2.imread(image_path)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        code = decode(gray)
         
-        if not decoded_objects:
-            return {"error": "QR Code not found or could not be read."}
-            
-        qr_data_raw = decoded_objects[0].data.decode('utf-8', errors='ignore')
+        if not code:
+            return {"error": "QR Code not found or could not be read"}
         
-        try:
-            root = ET.fromstring(qr_data_raw)
-            qr_attributes = root.attrib
-            return {
-                "name": qr_attributes.get("name"),
-                "dob": qr_attributes.get("dob"),
-                "gender": qr_attributes.get("gender"),
-                "uid": qr_attributes.get("uid"),
-            }
-        except ET.ParseError:
-            return {"error": "QR data is not valid XML.", "raw_data": qr_data_raw}
-            
+        qrData = code[0].data
+        isSecureQR = (isSecureQr(qrData))
+
+        if isSecureQR:
+            secure_qr = AadhaarSecureQr(int(qrData))
+            decoded_secure_qr_data = secure_qr.decodeddata()
+            if decoded_secure_qr_data:
+                return decoded_secure_qr_data
+            else:
+                return {"error": "QR Code could not be found or could not be read."}
+        else:
+            # handling the case when QR code is not secured => Old QR
+            # isSecureQr is false
+            return {"error": "The detected QR code is not a secure Aadhaar QR code."}
+
     except Exception as e:
-        return {"error": f"QR Code processing failed: {str(e)}"}
+        return {"error": str(e)}
 
 
+#====================================================================================================
 def extract_aadhaar_data(image_path, text_model_raw_results):
     try:
         detections = Detections.from_ultralytics(text_model_raw_results)
@@ -257,6 +263,7 @@ def extract_aadhaar_data(image_path, text_model_raw_results):
             'ADDRESS': 'Address'
         }
         
+        # The loop will now run for ALL detected fields
         for bbox, conf, cls_name in zip(detections.xyxy, detections.confidence, detections.data['class_name']):
             confidences.append(float(conf))
             x1, y1, x2, y2 = map(int, bbox)
@@ -264,29 +271,22 @@ def extract_aadhaar_data(image_path, text_model_raw_results):
             if roi.size == 0:
                 continue
 
-            # --- FIX: Define a custom config for Tesseract ---
-            config = '--psm 6' # A good default for other fields
             cls_name_str = str(cls_name)
+            config = '--psm 7 -c tessedit_char_whitelist=0123456789 ' if cls_name_str == 'AADHAR_NUMBER' else '--psm 6'
             
-            if cls_name_str == 'AADHAR_NUMBER':
-                # Use a specific, stricter config for the Aadhaar number
-                config = '--psm 7 -c tessedit_char_whitelist=0123456789 '
-            
-            # OCR on the region of interest with the specified config
-            text = pytesseract.image_to_string(
-                roi,
-                lang="eng+hin",
-                config=config  # Apply the custom config here
-            ).strip()
+            text = pytesseract.image_to_string(roi, lang="eng+hin", config=config).strip()
             
             normalized_key = key_mapping.get(cls_name_str, cls_name_str)
             aadhaar_data[normalized_key] = text
             
         print(f"Final Aadhaar Data: {aadhaar_data}")
         return {"data": aadhaar_data, "confidences": confidences}
+        
     except Exception as e:
         return {"error": f"OCR failed: {str(e)}"}
-
+    
+    
+#================================================================================================
 def validate_aadhaar_number(aadhaar_data):
     # Validating Aadhaar number using Verhoeff checksum
     try:
@@ -318,6 +318,7 @@ def validate_aadhaar_number(aadhaar_data):
         return result
     
 
+#===================================================================================================
 def create_annotated_image(image_path, text_model_results, object_model_results):
     try:
         image = cv2.imread(image_path)
@@ -357,7 +358,8 @@ def analyze_aadhar_pair(front_path, back_path):
     front_ocr_results = extract_aadhaar_data(front_path, text_model_raw_results_front)
     back_ocr_results = extract_aadhaar_data(back_path, text_model_raw_results_back)
     
-        
+    front_ocr_data = front_ocr_results.get("data", {})
+    back_ocr_data = back_ocr_results.get("data", {})    
     
     # running tamper detection on front
     object_model_raw_results_front = object_detection_model(front_path, verbose=False)[0]
@@ -396,13 +398,13 @@ def analyze_aadhar_pair(front_path, back_path):
         "front": {
             "object_verification": object_results_front,
             "exif_analysis": exif_results_front,
-            "ocr_analysis": front_ocr_results.get("data", {}),   
+            "ocr_analysis": front_ocr_data,   
             "face_detection": {"human_detected": human_detected, "detected_objects": general_labels},
         },
         "back": {
             "object_verification": object_results_back,
             "exif_analysis": exif_results_back,
-            "ocr_analysis": back_ocr_results.get("data", []),
+            "ocr_analysis": back_ocr_data,
             "qr_analysis": qr_results,
             "general_detection": {"human_detected":human_detected, "detected_objects": general_labels}   
         },
@@ -416,10 +418,12 @@ def analyze_aadhar_pair(front_path, back_path):
         }
     }
     
-    combined_ocr_results = front_ocr_results.copy()
-    if "Address" in back_ocr_results:
-        combined_ocr_results["Address"] = back_ocr_results["Address"]
+    combined_ocr_results = front_ocr_data.copy()
+    if "Address" in back_ocr_data:
+        combined_ocr_results["Address"] = back_ocr_data["Address"]
     results['combined_ocr'] = combined_ocr_results
+    
+    print("Combined OCR Results: ", combined_ocr_results)
     
     
     fraud_score = 0
@@ -432,7 +436,7 @@ def analyze_aadhar_pair(front_path, back_path):
         results["fraud_indicators"].append("No human detected in the photo area (possible fake document).")
         fraud_score += 1
 
-    if "error" not in combined_ocr_results and "error" not in qr_results:
+    if isinstance(combined_ocr_results, dict) and isinstance(qr_results, dict) and "error" not in qr_results:
         ocr_name = combined_ocr_results.get("Name", "").strip().lower()
         qr_name = qr_results.get("name", "").strip().lower()
         if ocr_name and qr_name and ocr_name not in qr_name:
@@ -440,7 +444,7 @@ def analyze_aadhar_pair(front_path, back_path):
              fraud_score += 3
              
         # for gender
-        ocr_gender = combined_ocr_results.get("Gender", "").strip.lower()
+        ocr_gender = combined_ocr_results.get("Gender", "").strip().lower()
         qr_gender = qr_results.get("gender", "").strip().lower()
         if ocr_gender and qr_gender and ocr_gender not in qr_gender and qr_gender not in ocr_gender:
              results["fraud_indicators"].append("Mismatch between printed gender and QR code name.")
@@ -551,7 +555,9 @@ def transform_results_for_template(results):
     # --- Back Card Data ---
     qr_analysis = results.get('back', {}).get('qr_analysis', {})
     qr_data_list = []
-    if 'error' not in qr_analysis:
+    print(qr_analysis)
+    
+    if isinstance(qr_analysis, dict) and 'error' not in qr_analysis:
         for key, val in qr_analysis.items():
             qr_data_list.append({"label": key.capitalize(), "value": val})
             
@@ -645,6 +651,10 @@ def upload_file():
     else:
         flash('Invalid file type. Please upload an image file.')
         return redirect(request.url)
+    
+@app.route('/analyzing')
+def analyzing():
+    return render_template('analyzing.html')
 
 @app.route('/analyze', methods=['POST'])
 def api_analyze():
