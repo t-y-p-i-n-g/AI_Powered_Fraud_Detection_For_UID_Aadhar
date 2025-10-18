@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify, flash, redirect, url_for
+from flask import Flask, request, render_template, jsonify, flash, redirect, url_for, Response, session, send_file
 import cv2
 import pytesseract
 from PIL import Image
@@ -20,6 +20,9 @@ import supervision as sv
 from pyzbar.pyzbar import decode
 from pyaadhaar.utils import isSecureQr
 from pyaadhaar.decode import AadhaarSecureQr
+import csv
+from datetime import datetime
+import io
 
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -436,42 +439,70 @@ def analyze_aadhar_pair(front_path, back_path):
         results["fraud_indicators"].append("No human detected in the photo area (possible fake document).")
         fraud_score += 1
 
-    if isinstance(combined_ocr_results, dict) and isinstance(qr_results, dict) and "error" not in qr_results:
-        ocr_name = combined_ocr_results.get("Name", "").strip().lower()
-        qr_name = qr_results.get("name", "").strip().lower()
-        if ocr_name and qr_name and ocr_name not in qr_name:
-             results["fraud_indicators"].append("Mismatch: Printed Name vs. QR Code Name.")
-             fraud_score += 3
-             
-        # for gender
-        ocr_gender = combined_ocr_results.get("Gender", "").strip().lower()
-        qr_gender = qr_results.get("gender", "").strip().lower()
-        if ocr_gender and qr_gender and ocr_gender not in qr_gender and qr_gender not in ocr_gender:
-             results["fraud_indicators"].append("Mismatch between printed gender and QR code name.")
-             fraud_score += 1
-        
-        # for dob
-        ocr_dob_raw = combined_ocr_results.get("DATE_OF_BIRTH", "")
-        ocr_dob = ocr_dob_raw.replace("-", "/").strip()
-        qr_dob = qr_results.get("dob", "").replace("-","/").strip()
-        if((ocr_dob and qr_dob) and (ocr_dob != qr_dob)):
-             results["fraud_indicators"].append("Mismatch between printed date of birth (DOB) and QR date of birth (DOB).")
-             fraud_score += 1
-        
-        # for aadhar number
-        ocr_num = combined_ocr_results.get("AADHAR_NUMBER", "").strip().lower()
-        qr_num = qr_results.get("aadhar_num", "").strip().lower()
-        if ocr_num and qr_num and ocr_num not in qr_num and qr_num not in ocr_num:
-             results["fraud_indicators"].append("Mismatch between printed date of birth (DOB) and QR date of birth (DOB).")
-             fraud_score += 1
-        
-        # for address
-        ocr_address = combined_ocr_results.get("ADDRESS", "").strip().lower()
-        qr_address = qr_results.get("address", "").strip().lower()
-        if ocr_address and qr_address and ocr_address not in qr_address and qr_address not in ocr_address:
-             results["fraud_indicators"].append("Mismatch between printed address and QR code address.")
-             fraud_score += 1
 
+    # ocr and qr results comparison
+    if isinstance(combined_ocr_results, dict) and isinstance(qr_results, dict) and "error" not in qr_results:
+        # name comparison
+        ocr_name = combined_ocr_results.get("Name","").strip().lower()
+        qr_name = qr_results.get("name","").strip().lower()
+        if ocr_name and qr_name and ocr_name not in qr_name and qr_name not in ocr_name:
+            results['fraud_indicators'].append("Name mismatch between OCR extracted name and qr code extracted name.")
+            fraud_score += 3
+            
+        # gender comparison
+        ocr_gender = combined_ocr_results.get("Gender","").strip().lower()
+        # QR Gender is either M or F format
+        qr_gender = qr_results.get("gender","").strip().lower()
+        # we need to handle "M" vs "Male" and "F" vs "Female"
+        if ocr_gender and qr_gender:
+            ocr_gender_normalized = ocr_gender[0] if ocr_gender else ""
+            qr_gender_normalized = qr_gender[0] if qr_gender else ""
+            # comparison
+            if ocr_gender_normalized and qr_gender_normalized and ocr_gender_normalized != qr_gender_normalized:
+                results['fraud_indicators'].append("Mismatch between OCR extracted gender and QR code extracted gender.")
+                fraud_score += 2
+                
+        
+        # dob comparison
+        ocr_dob_raw = combined_ocr_results.get("Date of Birth", "")
+        ocr_dob = ocr_dob_raw.replace("-", "/").replace("/", "").strip()
+        qr_dob = qr_results.get("dob", "").replace("-","/").replace("/", "").strip()
+        # comparison
+        if ocr_dob and qr_dob and ocr_dob != qr_dob:
+            results['fraud_indicators'].append("Mismatch between OCR extracted DOB and QR extracted DOB.")
+            fraud_score += 3
+        
+        
+        # aadhaar num comparison
+        ocr_num_full = combined_ocr_results.get("Aadhaar Number", "").replace(" ", "").strip()
+        # extracting the last 4 digits of ocr_num_full
+        if ocr_num_full and len(ocr_num_full) >= 4:
+            ocr_last_4 = ocr_num_full[-4:]
+            # extracting the last 4 digits of aadhar from qr
+            qr_ref = qr_results.get("aadhar_last_4_digit","")
+            print(f"OCR Aadhar Num: {ocr_num_full}, Last 4 digits from OCR: {ocr_last_4}")
+            print(f"QR Aadhar Num Last 4 digits: {qr_ref}")
+            
+            #comparison
+            if ocr_last_4 and qr_ref and ocr_last_4 not in qr_ref and qr_ref not in ocr_last_4:
+                results['fraud_indicators'].append("Mismatch between OCR extracted Aadhar Number and QR code extracted Aadhar Number.")
+                fraud_score += 3
+        
+        
+        # address comparison
+        ocr_address = combined_ocr_results.get("Address", "").strip().lower() 
+        qr_address = qr_results.get("address", "").strip().lower()
+        # More lenient address comparison (check if main parts match)
+        if ocr_address and qr_address:
+            # Extract key address components (pincode, area names)
+            ocr_parts = set(ocr_address.split())
+            qr_parts = set(qr_address.split())
+            common_parts = ocr_parts & qr_parts
+            # If less than 30% words match, flag as mismatch
+            if len(common_parts) < min(len(ocr_parts), len(qr_parts)) * 0.3:
+                results["fraud_indicators"].append("Mismatch between OCR extracted address and QR code extracted address.")
+                fraud_score += 1
+                
 
     if "error" not in results["front"]["ocr_analysis"]:
         results["aadhaar_validation"] = validate_aadhaar_number(results["front"]["ocr_analysis"])
@@ -484,7 +515,7 @@ def analyze_aadhar_pair(front_path, back_path):
             fraud_score += 1
 
     if(("error" not in exif_results_front or len(results["exif_analysis_front"]) == 0) or ("error" not in exif_results_back or len(results["exif_analysis_back"]) == 0)):
-        results["fraud_indicators"].append("No EXIF metadata found")
+        results["fraud_indicators"].append("No EXIF metadata found.")
         fraud_score += 0
 
     if "aadhaar_validation" in results and not results["aadhaar_validation"]["valid"]:
@@ -499,23 +530,6 @@ def analyze_aadhar_pair(front_path, back_path):
         "MODERATE FRAUD RISK" if fraud_score >= 1 else
         "LOW FRAUD RISK"
     )
-    
-    # saving the results to the firebase db
-    if db:
-        try:
-            results_for_firestore = results.copy()
-            
-            # removing the key that contains raw YOLO objects
-            if 'raw_results' in results_for_firestore:
-                del results_for_firestore['raw_results']
-            
-            results_for_firestore['timestamp'] = firestore.SERVER_TIMESTAMP
-            
-            db.collection('analyses').add(results_for_firestore)
-            print("Analysis results saved to Firestore.")
-        except Exception as e:
-            print(f"Error saving to Firestore: {e}")
-
     return results
 
 
@@ -591,9 +605,142 @@ def transform_results_for_template(results):
         'metadata_fields_left': metadata_fields[::2], # Split fields into two columns
         'metadata_fields_right': metadata_fields[1::2]
     }
+    
+    # saving the results to the firebase db
+    if db:
+        try:
+            results_for_firestore = transformed_data.copy()
+            
+            # removing the key that contains raw YOLO objects
+            if 'raw_results' in results_for_firestore:
+                del results_for_firestore['raw_results']
+            
+            results_for_firestore['timestamp'] = firestore.SERVER_TIMESTAMP
+            
+            db.collection('analyses').add(results_for_firestore)
+            print("Analysis results saved to Firestore.")
+        except Exception as e:
+            print(f"Error saving to Firestore: {e}")
+            
+    session['transformed_data'] = transformed_data
+            
     return transformed_data
+#=================================================================================================================
+
+# Implementing Export CSV funtionality
+# This function handles complex data types for the CSV
+
+@app.route('/export_csv', methods=['POST'])
+def export_csv():
+    """
+    Flask route to export analysis results as CSV file.
+    Retrieves the transformed_data from session and creates a CSV download.
+    """
+    try:
+        # Get the transformed data from session or request
+        # Option 1: From session (if you stored it there)
+        transformed_data = session.get('transformed_data')
+        
+        # Option 2: From global variable (if you stored it there)
+        # transformed_data = current_analysis_results
+        
+        if not transformed_data:
+            return jsonify({'error': 'No analysis data available'}), 400
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['Category', 'Field', 'Value'])
+        
+        # --- Overall Assessment Section ---
+        writer.writerow(['OVERALL ASSESSMENT', '', ''])
+        writer.writerow(['Assessment', 'Risk Level', transformed_data.get('risk_level', 'N/A')])
+        writer.writerow(['Assessment', 'Risk Score (%)', transformed_data.get('risk_score', 'N/A')])
+        writer.writerow(['Assessment', 'Confidence Score (%)', transformed_data.get('confidence_score', 'N/A')])
+        writer.writerow([])
+        
+        # --- Fraud Indicators Section ---
+        writer.writerow(['FRAUD INDICATORS', '', ''])
+        fraud_indicators = transformed_data.get('fraud_indicators', [])
+        if fraud_indicators:
+            for idx, indicator in enumerate(fraud_indicators, 1):
+                writer.writerow(['Fraud Indicator', f'Type #{idx}', indicator.get('type', 'N/A')])
+                writer.writerow(['Fraud Indicator', f'Severity #{idx}', indicator.get('severity', 'N/A')])
+                writer.writerow(['Fraud Indicator', f'Description #{idx}', indicator.get('description', 'N/A')])
+        else:
+            writer.writerow(['Fraud Indicator', 'Status', 'No fraud indicators detected'])
+        writer.writerow([])
+        
+        # --- OCR Front Card Data Section ---
+        writer.writerow(['OCR - FRONT CARD', '', ''])
+        writer.writerow(['OCR Status', 'Status', transformed_data.get('ocr_status', 'N/A')])
+        writer.writerow(['OCR Status', 'Message', transformed_data.get('ocr_message', 'N/A')])
+        
+        ocr_front = transformed_data.get('ocr_front', [])
+        for item in ocr_front:
+            writer.writerow(['OCR Data', item.get('label', 'N/A'), item.get('value', 'N/A')])
+        
+        writer.writerow(['OCR Data', 'Address', transformed_data.get('ocr_address', 'N/A')])
+        writer.writerow([])
+        
+        # --- QR Code Data Section ---
+        writer.writerow(['QR CODE - BACK CARD', '', ''])
+        writer.writerow(['QR Status', 'Decode Status', transformed_data.get('qr_decode_status', 'N/A')])
+        writer.writerow(['QR Status', 'Status', transformed_data.get('qr_status', 'N/A')])
+        writer.writerow(['QR Status', 'Message', transformed_data.get('qr_message', 'N/A')])
+        writer.writerow(['QR Status', 'Mismatch Detected', 'Yes' if transformed_data.get('qr_mismatch') else 'No'])
+        
+        qr_data_items = transformed_data.get('qr_data_items', [])
+        if qr_data_items:
+            for item in qr_data_items:
+                writer.writerow(['QR Data', item.get('label', 'N/A'), item.get('value', 'N/A')])
+        writer.writerow([])
+        
+        # --- EXIF Metadata Section ---
+        writer.writerow(['EXIF METADATA', '', ''])
+        writer.writerow(['EXIF Status', 'Status', transformed_data.get('exif_status', 'N/A')])
+        writer.writerow(['EXIF Status', 'Message', transformed_data.get('exif_message', 'N/A')])
+        writer.writerow(['EXIF Status', 'Warning Detected', 'Yes' if transformed_data.get('metadata_warning') else 'No'])
+        
+        if transformed_data.get('metadata_warning'):
+            writer.writerow(['EXIF Warning', 'Title', transformed_data.get('metadata_warning_title', 'N/A')])
+            writer.writerow(['EXIF Warning', 'Description', transformed_data.get('metadata_warning_text', 'N/A')])
+        
+        metadata_left = transformed_data.get('metadata_fields_left', [])
+        metadata_right = transformed_data.get('metadata_fields_right', [])
+        all_metadata = metadata_left + metadata_right
+        
+        for field in all_metadata:
+            warning_flag = ' (WARNING)' if field.get('warning') else ''
+            writer.writerow(['EXIF Data', field.get('label', 'N/A') + warning_flag, field.get('value', 'N/A')])
+        
+        # Prepare the CSV for download
+        output.seek(0)
+        
+        # Generate filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"aadhaar_analysis_{timestamp}.csv"
+        
+        # Create BytesIO object for sending
+        byte_output = io.BytesIO()
+        byte_output.write(output.getvalue().encode('utf-8'))
+        byte_output.seek(0)
+        
+        return send_file(
+            byte_output,
+            mimetype='text/csv',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        print(f"Error exporting CSV: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
+#===============================================================================================
 @app.route('/')
 def home():
     return render_template('upload.html')
