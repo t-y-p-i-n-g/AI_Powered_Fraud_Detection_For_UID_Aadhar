@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Aadhaar Fraud Detection - Analysis Results</title>
+    <title>AI Powered Aadhaar Card Fraud Detection - Analysis Results</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link
       rel="stylesheet"
@@ -34,7 +34,9 @@
               </svg>
             </div>
             <div>
-              <h1 class="text-xl text-slate-900">AI Aadhaar Fraud Detection</h1>
+              <h1 class="text-xl text-slate-900">
+                AI Powered Fraud Detection for UID Aadhaar
+              </h1>
               <p class="text-sm text-slate-500">Analysis Report</p>
             </div>
           </div>
@@ -108,12 +110,14 @@
               <div>
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-sm text-slate-600">Fraud Risk Score</span>
-                  <span class="text-sm text-slate-900">{{ risk_score }}%</span>
+                  <span class="text-sm text-slate-900"
+                    >{{ risk_score }} / 25</span
+                  >
                 </div>
                 <div class="w-full bg-slate-200 rounded-full h-2">
                   <div
                     class="bg-blue-600 h-2 rounded-full"
-                    style="width: {{ risk_score }}"
+                    style="width: {{ risk_score }}%"
                   ></div>
                 </div>
                 <p class="text-xs text-slate-500 mt-1">
@@ -141,6 +145,8 @@
               </div>
             </div>
 
+            <!-- Conditional Rendering -->
+            {% if show_manual_review_warning %}
             <div class="border border-amber-200 bg-amber-50 rounded-lg p-4">
               <div class="flex gap-3">
                 <svg
@@ -165,6 +171,7 @@
                 </div>
               </div>
             </div>
+            {% endif %}
           </div>
         </div>
 
@@ -570,19 +577,32 @@
                   <div
                     class="flex items-start gap-3 p-3 bg-slate-50 rounded-lg"
                   >
+                    {% if field.icon_type == 'fill' %}
+                    <svg
+                      class="h-5 w-5 text-slate-600 mt-0.5"
+                      fill="currentColor"
+                      stroke="none"
+                      viewBox="{{ field.viewBox }}"
+                    >
+                      {# For fill icons, we don't need stroke-linecap,
+                      stroke-linejoin, or stroke-width #}
+                      <path d="{{ field.icon }}" />
+                    </svg>
+                    {% else %} {# This is for 'stroke' icons #}
                     <svg
                       class="h-5 w-5 text-slate-600 mt-0.5"
                       fill="none"
                       stroke="currentColor"
-                      viewBox="0 0 24 24"
+                      viewBox="{{ field.viewBox }}"
                     >
                       <path
                         stroke-linecap="round"
                         stroke-linejoin="round"
-                        stroke-width="2"
+                        stroke-width="1.5"
                         d="{{ field.icon }}"
                       />
                     </svg>
+                    {% endif %}
                     <div class="flex-1">
                       <p class="text-xs text-slate-500 mb-1">
                         {{ field.label }}
@@ -959,7 +979,8 @@
     <footer class="border-t bg-white mt-16">
       <div class="container mx-auto px-6 py-6">
         <p class="text-center text-sm text-slate-500">
-          © 2025 AI Aadhaar Fraud Detection System. For authorized use only.
+          © 2025 AI Powered Fraud Detection System for UID Aadhaar. For
+          authorized use only.
         </p>
       </div>
     </footer>

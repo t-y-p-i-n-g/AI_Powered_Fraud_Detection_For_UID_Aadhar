@@ -32,6 +32,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# List of keywords that indicate digital editing
+SUSPICIOUS_SOFTWARE_KEYWORDS = [
+    'photoshop', 'gimp', 'affinity', 'pixelmator', 
+    'snapseed', 'lightroom', 'paint.net', 'corel'
+]
+
 # Initializing Firebase 
 try:
     # Check for the Hugging Face secret first
@@ -136,6 +142,7 @@ def validate_checksum(num_str_with_checksum):
         c = _d[c][_p[(i % 8)][digit]]
     return c == 0
 
+#--------------------------------------------------------------
 def get_exif_data(image_path):
     """Extract EXIF metadata from image"""
     try:
@@ -151,7 +158,23 @@ def get_exif_data(image_path):
     except Exception as e:
         return {"error": str(e)}
     
+#-----------------------------------------------------------------------------
+# logic for checking exif data
+def check_for_editing_software(exif_data):
+    if "error" in exif_data or not exif_data:
+        return False # no exif found
     
+    software_tags = str(exif_data.get('Software', '')).lower()
+    
+    if not software_tags:
+        return False
+    
+    for keyword in SUSPICIOUS_SOFTWARE_KEYWORDS:
+        if keyword in software_tags:
+            return True
+    
+    return False    
+#--------------------------------------------------------------------------    
 # Loading general object detection model (YOLO v8)
 try:
     general_model = YOLO("yolov8n.pt")
@@ -352,8 +375,11 @@ def create_annotated_image(image_path, text_model_results, object_model_results)
         print(f"Error creating annotated image: {e}")
         return None
 
-        
+#===========================================================================================================        
 def analyze_aadhar_pair(front_path, back_path):
+    fraud_score = 0
+    fraud_indicators = []
+    
     # running the text extaction model on both front and back images
     text_model_raw_results_front = aadhaar_model.predict(front_path, verbose=False)[0]
     text_model_raw_results_back = aadhaar_model.predict(back_path, verbose=False)[0]
@@ -362,7 +388,8 @@ def analyze_aadhar_pair(front_path, back_path):
     back_ocr_results = extract_aadhaar_data(back_path, text_model_raw_results_back)
     
     front_ocr_data = front_ocr_results.get("data", {})
-    back_ocr_data = back_ocr_results.get("data", {})    
+    back_ocr_data = back_ocr_results.get("data", {}) 
+    print("DEBUG: Extracted Back OCR Data:", back_ocr_data) # <--- ADD THIS LINE   
     
     # running tamper detection on front
     object_model_raw_results_front = object_detection_model(front_path, verbose=False)[0]
@@ -371,6 +398,31 @@ def analyze_aadhar_pair(front_path, back_path):
     # running tamper detection on back
     object_model_raw_results_back = object_detection_model(back_path, verbose=False)[0]
     object_results_back = run_object_verification(back_path, object_model_raw_results_back)
+    
+
+    # qr code analysis
+    qr_results = decode_aadhaar_qr(back_path)
+    if qr_results is None or (isinstance(qr_results, dict) and "error" in qr_results):
+        fraud_indicators.append("Failed to extract QR Code Data.")
+        fraud_score += 3
+    
+    # running exif on both front and back
+    exif_results_front = get_exif_data(front_path)
+    exif_results_back = get_exif_data(back_path)
+    
+    # LOGIC FOR EXIF DATA
+    front_exif_check = check_for_editing_software(exif_results_front)
+    back_exif_check = check_for_editing_software(exif_results_back)
+    
+    if front_exif_check or back_exif_check:
+        fraud_indicators.append("Use of difital editing software detected in image metadata.")
+        fraud_score += 2
+    
+    
+    general_model_results_front = general_model(front_path, verbose=False)[0]
+    
+    general_labels = [general_model.names[int(cls)] for cls in general_model_results_front.boxes.cls]
+    human_detected = "person" in general_labels
     
     # confidence scores
     all_confidences = []
@@ -386,67 +438,19 @@ def analyze_aadhar_pair(front_path, back_path):
     # calculating average confidence
     average_confidence = np.mean(all_confidences) if all_confidences else 0.0
     
-    # running exif on both front and back
-    exif_results_front = get_exif_data(front_path)
-    exif_results_back = get_exif_data(back_path)
-
-    # qr code analysis
-    qr_results = decode_aadhaar_qr(back_path)
-    
-    general_model_results_front = general_model(front_path, verbose=False)[0]
-    
-    general_labels = [general_model.names[int(cls)] for cls in general_model_results_front.boxes.cls]
-    human_detected = "person" in general_labels
-    results = {
-        "front": {
-            "object_verification": object_results_front,
-            "exif_analysis": exif_results_front,
-            "ocr_analysis": front_ocr_data,   
-            "face_detection": {"human_detected": human_detected, "detected_objects": general_labels},
-        },
-        "back": {
-            "object_verification": object_results_back,
-            "exif_analysis": exif_results_back,
-            "ocr_analysis": back_ocr_data,
-            "qr_analysis": qr_results,
-            "general_detection": {"human_detected":human_detected, "detected_objects": general_labels}   
-        },
-        "average_confidence": average_confidence,
-        "fraud_indicators": [],
-        "raw_results": {
-            "text_front": text_model_raw_results_front,
-            "text_back": text_model_raw_results_back,
-            "object_front": object_model_raw_results_front,
-            "object_back": object_model_raw_results_back
-        }
-    }
-    
     combined_ocr_results = front_ocr_data.copy()
     if "Address" in back_ocr_data:
         combined_ocr_results["Address"] = back_ocr_data["Address"]
-    results['combined_ocr'] = combined_ocr_results
-    
     print("Combined OCR Results: ", combined_ocr_results)
     
     
-    fraud_score = 0
-    
-    if "error" not in object_results_front and object_results_front.get("is_tampered"):
-        results["fraud_indicators"].append("Tampered region detected on the front of the card.")
-        fraud_score += 3
-        
-    if not human_detected:
-        results["fraud_indicators"].append("No human detected in the photo area (possible fake document).")
-        fraud_score += 1
-
-
     # ocr and qr results comparison
     if isinstance(combined_ocr_results, dict) and isinstance(qr_results, dict) and "error" not in qr_results:
         # name comparison
         ocr_name = combined_ocr_results.get("Name","").strip().lower()
         qr_name = qr_results.get("name","").strip().lower()
         if ocr_name and qr_name and ocr_name not in qr_name and qr_name not in ocr_name:
-            results['fraud_indicators'].append("Name mismatch between OCR extracted name and qr code extracted name.")
+            fraud_indicators.append("Name mismatch between OCR extracted name and qr code extracted name.")
             fraud_score += 3
             
         # gender comparison
@@ -459,7 +463,7 @@ def analyze_aadhar_pair(front_path, back_path):
             qr_gender_normalized = qr_gender[0] if qr_gender else ""
             # comparison
             if ocr_gender_normalized and qr_gender_normalized and ocr_gender_normalized != qr_gender_normalized:
-                results['fraud_indicators'].append("Mismatch between OCR extracted gender and QR code extracted gender.")
+                fraud_indicators.append("Mismatch between OCR extracted gender and QR code extracted gender.")
                 fraud_score += 2
                 
         
@@ -469,7 +473,7 @@ def analyze_aadhar_pair(front_path, back_path):
         qr_dob = qr_results.get("dob", "").replace("-","/").replace("/", "").strip()
         # comparison
         if ocr_dob and qr_dob and ocr_dob != qr_dob:
-            results['fraud_indicators'].append("Mismatch between OCR extracted DOB and QR extracted DOB.")
+            fraud_indicators.append("Mismatch between OCR extracted DOB and QR extracted DOB.")
             fraud_score += 3
         
         
@@ -479,13 +483,13 @@ def analyze_aadhar_pair(front_path, back_path):
         if ocr_num_full and len(ocr_num_full) >= 4:
             ocr_last_4 = ocr_num_full[-4:]
             # extracting the last 4 digits of aadhar from qr
-            qr_ref = qr_results.get("aadhar_last_4_digit","")
+            qr_ref = qr_results.get("aadhaar_last_4_digit","")
             print(f"OCR Aadhar Num: {ocr_num_full}, Last 4 digits from OCR: {ocr_last_4}")
             print(f"QR Aadhar Num Last 4 digits: {qr_ref}")
             
             #comparison
             if ocr_last_4 and qr_ref and ocr_last_4 not in qr_ref and qr_ref not in ocr_last_4:
-                results['fraud_indicators'].append("Mismatch between OCR extracted Aadhar Number and QR code extracted Aadhar Number.")
+                fraud_indicators.append("Mismatch between OCR extracted Aadhar Number and QR code extracted Aadhar Number.")
                 fraud_score += 3
         
         
@@ -500,43 +504,95 @@ def analyze_aadhar_pair(front_path, back_path):
             common_parts = ocr_parts & qr_parts
             # If less than 30% words match, flag as mismatch
             if len(common_parts) < min(len(ocr_parts), len(qr_parts)) * 0.3:
-                results["fraud_indicators"].append("Mismatch between OCR extracted address and QR code extracted address.")
+                fraud_indicators.append("Mismatch between OCR extracted address and QR code extracted address.")
                 fraud_score += 1
-                
-
-    if "error" not in results["front"]["ocr_analysis"]:
-        results["aadhaar_validation"] = validate_aadhaar_number(results["front"]["ocr_analysis"])
-
     
-    # Check object detection for fraud indicators
-    if "error" not in object_results_front:
-        if object_results_front.get("fraud_indicator"):
-            results["fraud_indicators"].append("No human detected in image (possible fake document)")
-            fraud_score += 1
+    if "error" not in object_results_front and object_results_front.get("is_tampered"):
+        fraud_indicators.append("Tampered region detected on the front of the card.")
+        fraud_score += 3
+        
+    if not human_detected:
+        fraud_indicators.append("No human detected in the photo area (possible fake document).")
+        fraud_score += 5
 
-    if(("error" not in exif_results_front or len(results["exif_analysis_front"]) == 0) or ("error" not in exif_results_back or len(results["exif_analysis_back"]) == 0)):
-        results["fraud_indicators"].append("No EXIF metadata found.")
-        fraud_score += 0
 
-    if "aadhaar_validation" in results and not results["aadhaar_validation"]["valid"]:
-        results["fraud_indicators"].append(
-            f"Invalid Aadhaar number: {results['aadhaar_validation']['reason']}"
-        )
-        fraud_score += 2
 
-    results["fraud_score"] = fraud_score
-    results["assessment"] = (
+    # if ("error" in exif_results_front or not exif_results_front) and ("error" in exif_results_back or not exif_results_back):
+    #     fraud_indicators.append("No EXIF metadata found.")
+    #     fraud_score += 0
+    
+
+    assessment = (
         "HIGH FRAUD RISK" if fraud_score >= 3 else
         "MODERATE FRAUD RISK" if fraud_score >= 1 else
         "LOW FRAUD RISK"
     )
+    
+    
+    results = {
+        "front": {
+            "object_verification": object_results_front,
+            "exif_analysis": exif_results_front,
+            "ocr_analysis": front_ocr_data,   
+            "face_detection": {"human_detected": human_detected, "detected_objects": general_labels},
+        },
+        "back": {
+            "object_verification": object_results_back,
+            "exif_analysis": exif_results_back,
+            "ocr_analysis": back_ocr_data,
+            "qr_analysis": qr_results,
+            "general_detection": {"human_detected":human_detected, "detected_objects": general_labels}   
+        },
+        "combined_ocr":combined_ocr_results,
+        "average_confidence": average_confidence,
+        "fraud_indicators": fraud_indicators,
+        "assessment": assessment,
+        "fraud_score": fraud_score,
+        "raw_results": {
+            "text_front": text_model_raw_results_front,
+            "text_back": text_model_raw_results_back,
+            "object_front": object_model_raw_results_front,
+            "object_back": object_model_raw_results_back
+        }
+    }
+    
+    print(f"Fraud Score: {fraud_score}")
     return results
 
+#=================================================================================================================
+# Helper function to handle indicator severity logic
 
+def get_indicator_severity(description):
+    #Assigns a severity level based on the indicator's text.
+    desc_lower = description.lower()
+    
+    # --- HIGH Severity Indicators ---
+    # These are strong signs of fraud or critical failures.
+    if "mismatch" in desc_lower or \
+       "tampered" in desc_lower or \
+       "failed to extract qr" in desc_lower or \
+       "no human detected" in desc_lower:
+        return 'HIGH'
+
+    # --- MEDIUM Severity Indicators ---
+    # These are suspicious and warrant a closer look.
+    if "invalid aadhaar number" in desc_lower:
+        return 'HIGH'
+    
+    if "digital editing software" in desc_lower:
+        return 'HIGH'
+    
+    # Fallback for any new indicators you might add
+    return 'MODERATE'
+#============================================================================================
+#=========================================================
 def transform_results_for_template(results):   
     # --- Overall Assessment ---
     risk_level = results.get('assessment', 'UNKNOWN').replace(" FRAUD RISK", "")
-    risk_score = int(results.get('fraud_score', 0) * 20) # Convert a score out of 5 to a percentage
+    
+    raw_fraud_score = results.get('fraud_score', 0)
+    
+    risk_score = int(raw_fraud_score) # Convert a score out of 25 to a percentage
 
     color_map = {
         'HIGH': 'border-red-500 text-red-900 bg-red-50',
@@ -547,24 +603,36 @@ def transform_results_for_template(results):
     
     # --- Fraud Indicators ---
     indicators = []
+    
     for desc in results.get('fraud_indicators', []):
-        severity = 'high' if "mismatch" in desc.lower() or "tampered" in desc.lower() else 'medium'
-        badge_map = {'high': 'border-red-300 bg-red-100 text-red-800', 'medium': 'border-amber-300 bg-amber-100 text-amber-800'}
+        #Call the new helper function to get the correct severity
+        severity = get_indicator_severity(desc)
         indicators.append({
             "type": desc.split(':')[0],
             "severity": severity,
             "description": desc,
-            "badge_class": badge_map.get(severity, '')
-        })
+            #Use the badge_map, with 'medium' as a safe fallback
+            "badge_class": color_map.get(severity, color_map['MODERATE']) 
+    })
 
     # --- Front Card OCR ---
     ocr_front_data = results.get('front', {}).get('ocr_analysis', {})
     ocr_front_list = [
-        {"label": "Name", "value": ocr_front_data.get("Name", "N/A"), "icon": "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"},
-        {"label": "Date of Birth", "value": ocr_front_data.get("Date of Birth", "N/A"), "icon": "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"},
-        {"label": "Gender", "value": ocr_front_data.get("Gender", "N/A"), "icon": "M13 10V3L4 14h7v7l9-11h-7z"},
-        {"label": "Aadhaar Number", "value": ocr_front_data.get("Aadhaar Number", "N/A"), "icon": "M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-1.026.977-2.19.977-3.418a8 8 0 10-15.828-1.55A8 8 0 004 12c0-4.418 3.582-8 8-8s8 3.582 8 8z"},
+        {"label": "Name", "value": ocr_front_data.get("Name", "N/A"), "viewBox": "0 0 24 24","icon_type": "stroke", "icon": "M22 12.634c-4 3.512-4.572-2.013-6.65-1.617c-2.35.447-3.85 5.428-2.35 5.428s-.5-5.945-2.5-3.89s-2.64 4.74-4.265 2.748C-1.5 5.813 5-1.15 8.163 3.457C10.165 6.373 6.5 16.977 2 22m7-1h10"},
+        {"label": "Date of Birth", "value": ocr_front_data.get("Date of Birth", "N/A"), "viewBox": "0 0 24 24", "icon_type": "stroke", "icon": "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"},
+        {"label": "Gender", "value": ocr_front_data.get("Gender", "N/A"), "viewBox": "0 0 32 32", "icon_type": "fill", "icon": "M22 3v2h3.563l-3.375 3.406A6.96 6.96 0 0 0 18 7c-1.87 0-3.616.74-4.938 2.063a6.94 6.94 0 0 0 .001 9.875c.87.87 1.906 1.495 3.062 1.812c.114-.087.242-.178.344-.28a3.45 3.45 0 0 0 .874-1.532a4.9 4.9 0 0 1-2.875-1.407C13.524 16.588 13 15.336 13 14s.525-2.586 1.47-3.53C15.412 9.523 16.664 9 18 9s2.587.525 3.53 1.47A4.96 4.96 0 0 1 23 14c0 .865-.245 1.67-.656 2.406c.096.516.156 1.058.156 1.594q0 .749-.125 1.47c.2-.163.378-.348.563-.532C24.26 17.614 25 15.87 25 14c0-1.53-.504-2.984-1.406-4.188L27 6.438V10h2V3zm-6.125 8.25c-.114.087-.242.178-.344.28c-.432.434-.714.96-.874 1.533c1.09.14 2.085.616 2.875 1.406c.945.943 1.47 2.195 1.47 3.53s-.525 2.586-1.47 3.53C16.588 22.477 15.336 23 14 23s-2.587-.525-3.53-1.47A4.95 4.95 0 0 1 9 18c0-.865.245-1.67.656-2.406A9 9 0 0 1 9.5 14q0-.748.125-1.47c-.2.163-.377.348-.563.533C7.742 14.384 7 16.13 7 18c0 1.53.504 2.984 1.406 4.188L6.72 23.875l-2-2l-1.44 1.406l2 2l-2 2l1.44 1.44l2-2l2 2l1.405-1.44l-2-2l1.688-1.686A6.93 6.93 0 0 0 14 25c1.87 0 3.616-.74 4.938-2.063C20.26 21.616 21 19.87 21 18s-.74-3.614-2.063-4.938c-.87-.87-1.906-1.495-3.062-1.812"},
+        {"label": "Aadhaar Number", "value": ocr_front_data.get("Aadhaar Number", "N/A"), "viewBox": "0 0 32 32", "icon_type": "fill", "icon": "M11 19v2H5v-2h2v-5H5v-2h2v-1h2v8zm8 0h-4v-2h2c1.103 0 2-.897 2-2v-2c0-1.103-.897-2-2-2h-4v2h4v2h-2c-1.103 0-2 .897-2 2v4h6zm6-8h-4v2h4v2h-3v2h3v2h-4v2h4c1.103 0 2-.897 2-2v-6c0-1.103-.897-2-2-2M2 4v4h2V4h4V2H4a2 2 0 0 0-2 2m26-2h-4v2h4v4h2V4a2 2 0 0 0-2-2M4 28v-4H2v4a2 2 0 0 0 2 2h4v-2zm24-4v4h-4v2h4a2 2 0 0 0 2-2v-4z"},
     ]
+    
+    
+    # --- Back OCR Data ---
+    ocr_back_data = results.get('back', {}).get('ocr_analysis', {})
+    ocr_back_list = []
+    if 'error' not in ocr_back_data:
+        for key, val in ocr_back_data.items():
+            if key == "Address":
+                ocr_back_list.append({"label": key.capitalize(), "value": val})
+            
 
     # --- Back Card Data ---
     qr_analysis = results.get('back', {}).get('qr_analysis', {})
@@ -581,6 +649,15 @@ def transform_results_for_template(results):
     if 'error' not in exif_analysis:
         for key, val in exif_analysis.items():
             metadata_fields.append({"label": str(key), "value": str(val), "warning": "Software" in str(key)})
+            
+
+    # getting the raw data from the results object in analyze_aadhar_pair
+    raw_fraud_indicators = results.get('fraud_indicators', [])
+    
+    # ocr_address
+    ocr_address = results.get('combined_ocr_results', {}).get('Address', 'N/A')
+    
+    combined_ocr_length = len(ocr_front_data) + len(ocr_back_data)
 
     transformed_data = {
         'risk_level': risk_level,
@@ -589,13 +666,14 @@ def transform_results_for_template(results):
         'risk_color_class': color_map.get(risk_level, 'border-slate-500'),
         'fraud_indicators': indicators,
         'ocr_status': "Success" if 'error' not in ocr_front_data else "Failed",
-        'ocr_message': f"{len(ocr_front_data)} fields extracted" if 'error' not in ocr_front_data else "Extraction failed",
+        'ocr_message': f"{combined_ocr_length} fields extracted" if 'error' not in ocr_front_data else "Extraction failed",
         'qr_status': "Decoded" if 'error' not in qr_analysis else "Failed",
         'qr_message': "Data successfully parsed" if 'error' not in qr_analysis else qr_analysis.get('error', 'Unknown error'),
         'exif_status': "Found" if exif_analysis and 'error' not in exif_analysis else "Not Found",
         'exif_message': f"{len(exif_analysis)} fields found" if exif_analysis and 'error' not in exif_analysis else "No EXIF data",
         'ocr_front': ocr_front_list,
         'ocr_address': results.get('combined_ocr', {}).get('Address', 'N/A'),
+        'ocr_back': ocr_back_list,
         'qr_decode_status': "Success" if 'error' not in qr_analysis else "Failed",
         'qr_data_items': qr_data_list,
         'qr_mismatch': any("Mismatch" in indicator for indicator in results.get('fraud_indicators', [])),
@@ -603,8 +681,10 @@ def transform_results_for_template(results):
         'metadata_warning_title': "Editing Software Detected",
         'metadata_warning_text': "The image metadata contains tags indicating it was processed by editing software, which can be a sign of digital manipulation.",
         'metadata_fields_left': metadata_fields[::2], # Split fields into two columns
-        'metadata_fields_right': metadata_fields[1::2]
+        'metadata_fields_right': metadata_fields[1::2],
+        'show_manual_review_warning': len(raw_fraud_indicators) >= 2
     }
+    
     
     # saving the results to the firebase db
     if db:
@@ -625,7 +705,6 @@ def transform_results_for_template(results):
     session['transformed_data'] = transformed_data
             
     return transformed_data
-#=================================================================================================================
 
 # Implementing Export CSV funtionality
 # This function handles complex data types for the CSV
