@@ -32,7 +32,7 @@ This project implements a robust analysis engine that combines multiple techniqu
 
   * **Backend:** Python, Flask
   * **AI / ML:** PyTorch, Ultralytics (YOLOv8), OpenCV, Tesseract, Scikit-image
-  * **Frontend:** HTML, Jinja2 Template Engine, Bootstrap
+  * **Frontend:** HTML, Jinja2 Template Engine, TailwindCSS
   * **Data Handling:** Pillow, Pandas, NumPy
 
 -----
